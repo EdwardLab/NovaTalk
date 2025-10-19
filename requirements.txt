@@ -1,0 +1,13 @@
+Flask>=2.3
+Flask-SQLAlchemy>=3.0
+Flask-Migrate>=4.0
+Flask-Login>=0.6
+Flask-WTF>=1.1
+Flask-SocketIO==5.3.6
+python-socketio==5.11.3
+python-engineio==4.9.1
+python-dotenv>=1.0
+email-validator>=2.0
+PyMySQL>=1.1
+eventlet>=0.35
+Pillow>=10.0

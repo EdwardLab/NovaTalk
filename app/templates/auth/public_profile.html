@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block title %}{{ profile_user.display_name }} · NovaTalk{% endblock %}
+{% block content %}
+{% include 'partials/topbar.html' %}
+<div class="profile-page">
+    <section class="profile-detail surface-card transition-layer">
+        <div class="profile-detail__header">
+            <div class="profile-detail__avatar">
+                {% if profile_user.avatar_url %}
+                    <img src="{{ profile_user.avatar_url }}" alt="{{ profile_user.display_name }}">
+                {% else %}
+                    <span>{{ profile_user.display_name[0] }}</span>
+                {% endif %}
+            </div>
+            <div class="profile-detail__meta">
+                <h1>{{ profile_user.display_name }}</h1>
+                <p class="profile-detail__username">{{ '@' ~ profile_user.username.lstrip('@') }}</p>
+                <p class="profile-detail__status">
+                    {% if profile_user.online %}
+                        <span class="status-dot status-dot--online"></span> Online now
+                    {% else %}
+                        <span class="status-dot"></span> Last seen {{ profile_user.last_seen.strftime('%b %d, %Y %H:%M') if profile_user.last_seen else 'recently' }}
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+        <div class="profile-detail__body">
+            <h2>About</h2>
+            <p>{{ profile_user.bio or 'No bio provided yet.' }}</p>
+        </div>
+        {% if friend_status != 'self' %}
+            <div class="profile-detail__actions">
+                {% if friend_status == 'friends' %}
+                    <form method="post" action="{{ url_for('chat.remove_friend') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="friend_id" value="{{ profile_user.id }}">
+                        <button type="submit" class="md-text-button md-ripple">
+                            <span class="material-symbols-rounded" aria-hidden="true">person_remove</span>
+                            <span>Remove friend</span>
+                        </button>
+                    </form>
+                {% elif friend_status == 'incoming' and incoming_request %}
+                    <form method="post" action="{{ url_for('chat.respond_friend_request', request_id=incoming_request.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="profile-detail__action-row">
+                            <button type="submit" name="action" value="accept" class="md-filled-button md-ripple">
+                                <span class="material-symbols-rounded" aria-hidden="true">check</span>
+                                <span>Accept request</span>
+                            </button>
+                            <button type="submit" name="action" value="decline" class="md-text-button md-ripple">
+                                <span class="material-symbols-rounded" aria-hidden="true">close</span>
+                                <span>Decline</span>
+                            </button>
+                        </div>
+                    </form>
+                {% elif friend_status == 'outgoing' and outgoing_request %}
+                    <form method="post" action="{{ url_for('chat.cancel_friend_request') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="request_id" value="{{ outgoing_request.id }}">
+                        <button type="submit" class="md-text-button md-ripple">
+                            <span class="material-symbols-rounded" aria-hidden="true">undo</span>
+                            <span>Cancel request</span>
+                        </button>
+                    </form>
+                {% else %}
+                    <form method="post" action="{{ url_for('chat.send_friend_request') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="username" value="{{ profile_user.username }}">
+                        <button type="submit" class="md-filled-button md-ripple">
+                            <span class="material-symbols-rounded" aria-hidden="true">person_add</span>
+                            <span>Add friend</span>
+                        </button>
+                    </form>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="profile-detail__actions">
+                <a href="{{ url_for('auth.profile') }}" class="md-filled-button md-ripple">
+                    <span class="material-symbols-rounded" aria-hidden="true">edit</span>
+                    <span>Edit profile</span>
+                </a>
+            </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

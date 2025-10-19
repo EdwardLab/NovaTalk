@@ -1,0 +1,226 @@
+{% extends 'base.html' %}
+{% block title %}Chat · NovaTalk{% endblock %}
+{% block head %}
+    {{ super() }}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/chat.css') }}">
+{% endblock %}
+{% block content %}
+    {% include 'partials/topbar.html' %}
+    <div class="chat-app" data-chat-app>
+        <script id="nova-initial-state" type="application/json">{{ initial_state|safe }}</script>
+        <div class="chat-app__toast-region" data-toast-host aria-live="polite" aria-atomic="true"></div>
+        <aside class="chat-app__sidebar" data-sidebar id="primary-navigation">
+            <header class="sidebar-profile">
+                <div class="sidebar-profile__avatar" data-profile-avatar>
+                    <span class="material-symbols-rounded" aria-hidden="true">person</span>
+                </div>
+                <div class="sidebar-profile__meta">
+                    <h2 class="sidebar-profile__name" data-profile-name>Loading…</h2>
+                    <p class="sidebar-profile__username" data-profile-username></p>
+                    <div class="sidebar-profile__presence" data-presence>
+                        <span class="presence-dot" data-presence-indicator></span>
+                        <span data-presence-text>Offline</span>
+                    </div>
+                </div>
+                <button type="button" class="md-icon-button md-ripple sidebar-profile__logout" data-logout data-logout-url="{{ url_for('auth.logout') }}">
+                    <span class="material-symbols-rounded" aria-hidden="true">logout</span>
+                    <span class="sr-only">Logout</span>
+                </button>
+            </header>
+            <nav class="sidebar-tabs" role="tablist" data-tab-list>
+                <button type="button" class="sidebar-tab is-active" data-tab-trigger="chats">
+                    <span class="material-symbols-rounded" aria-hidden="true">forum</span>
+                    <span>Chats</span>
+                    <span class="badge" data-chats-count hidden>0</span>
+                </button>
+                <button type="button" class="sidebar-tab" data-tab-trigger="contacts">
+                    <span class="material-symbols-rounded" aria-hidden="true">group</span>
+                    <span>Contacts</span>
+                    <span class="badge badge--danger" data-pending-count hidden>0</span>
+                </button>
+                <button type="button" class="sidebar-tab" data-tab-trigger="me">
+                    <span class="material-symbols-rounded" aria-hidden="true">person</span>
+                    <span>Me</span>
+                </button>
+            </nav>
+            <div class="sidebar-panels">
+                <section class="sidebar-panel is-visible" data-tab-panel="chats" aria-label="Recent conversations">
+                    <header class="panel-header">
+                        <div>
+                            <h3>Recent conversations</h3>
+                            <p>Pick a thread to continue chatting.</p>
+                        </div>
+                        <button type="button" class="md-filled-button md-ripple" data-new-chat>
+                            <span class="material-symbols-rounded" aria-hidden="true">add_comment</span>
+                            <span>New chat</span>
+                        </button>
+                    </header>
+                    <div class="chat-roster" data-chat-list>
+                        <div class="empty-state">
+                            <span class="material-symbols-rounded" aria-hidden="true">forum</span>
+                            <p>No chats yet. Start a conversation from Contacts.</p>
+                        </div>
+                    </div>
+                </section>
+                <section class="sidebar-panel" data-tab-panel="contacts" aria-label="Contacts and friend requests" hidden>
+                    <header class="panel-header">
+                        <div>
+                            <h3>People &amp; requests</h3>
+                            <p>Send invitations or manage incoming requests.</p>
+                        </div>
+                    </header>
+                    <form class="contacts-search" data-contacts-search novalidate>
+                        <label class="sr-only" for="contacts-search-input">Search users</label>
+                        <div class="input-field">
+                            <input id="contacts-search-input" type="search" class="input-field__control" placeholder="Search by name or @username" data-contacts-search-input>
+                        </div>
+                        <button type="submit" class="md-filled-button md-ripple">
+                            <span class="material-symbols-rounded" aria-hidden="true">search</span>
+                            <span>Search</span>
+                        </button>
+                    </form>
+                    <div class="search-results" data-contacts-results hidden></div>
+                    <div class="contacts-section">
+                        <h4>
+                            Pending requests
+                            <span class="badge badge--danger" data-pending-count-inline hidden>0</span>
+                        </h4>
+                        <div class="contact-list" data-incoming-list>
+                            <div class="empty-state small">
+                                <p>No pending requests.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="contacts-section">
+                        <h4>Sent requests</h4>
+                        <div class="contact-list" data-outgoing-list>
+                            <div class="empty-state small">
+                                <p>You haven't sent any requests.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="contacts-section">
+                        <h4>Friends</h4>
+                        <div class="contact-list" data-friends-list>
+                            <div class="empty-state small">
+                                <p>Add a friend to start chatting instantly.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="contacts-section">
+                        <h4>Group invitations</h4>
+                        <div class="contact-list" data-group-invite-incoming>
+                            <div class="empty-state small">
+                                <p>No group invites.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="contacts-section">
+                        <h4>Invites you sent</h4>
+                        <div class="contact-list" data-group-invite-outgoing>
+                            <div class="empty-state small">
+                                <p>No pending group invites.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="contacts-section">
+                        <h4>Create a group</h4>
+                        <form class="group-create-form" data-group-create-form novalidate>
+                            <div class="input-field">
+                                <label for="group-name-input">Group name</label>
+                                <input id="group-name-input" type="text" class="input-field__control" data-group-create-name required>
+                            </div>
+                            <div class="input-field">
+                                <label for="group-invite-input">Invite usernames</label>
+                                <input id="group-invite-input" type="text" class="input-field__control" placeholder="e.g. alex, jamie, @casey" data-group-create-invitees>
+                                <p class="helper-text">Invites require approval before members join.</p>
+                            </div>
+                            <button type="submit" class="md-filled-button md-ripple">Create group</button>
+                        </form>
+                    </div>
+                </section>
+                <section class="sidebar-panel" data-tab-panel="me" aria-label="Profile settings" hidden>
+                    <header class="panel-header">
+                        <div>
+                            <h3>Your profile</h3>
+                            <p>Update how others see you.</p>
+                        </div>
+                    </header>
+                    <div class="profile-card">
+                        <div class="profile-card__avatar" data-profile-avatar-large>
+                            <span class="material-symbols-rounded" aria-hidden="true">person</span>
+                        </div>
+                        <p class="profile-card__hint">This preview updates as you change your details.</p>
+                    </div>
+                    <form class="profile-form" data-profile-form novalidate autocomplete="off">
+                        <div class="input-field">
+                            <label for="profile-display-name">Display name</label>
+                            <input id="profile-display-name" type="text" class="input-field__control" maxlength="120" data-profile-display-name required>
+                        </div>
+                        <div class="input-field">
+                            <label for="profile-bio">Bio</label>
+                            <textarea id="profile-bio" rows="4" class="input-field__control" maxlength="280" data-profile-bio></textarea>
+                            <p class="helper-text"><span data-profile-bio-count>0</span>/280</p>
+                        </div>
+                        <div class="input-field">
+                            <label for="profile-email">Email</label>
+                            <input id="profile-email" type="email" class="input-field__control" data-profile-email disabled>
+                        </div>
+                        <div class="profile-form__actions">
+                            <button type="submit" class="md-filled-button md-ripple" data-profile-save>Save changes</button>
+                            <a class="md-text-button md-ripple" href="{{ url_for('auth.profile') }}">Open full profile</a>
+                            <a class="md-text-button md-ripple" href="{{ url_for('auth.logout') }}">Logout</a>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </aside>
+        <section class="chat-app__main" data-conversation>
+            <header class="conversation-header" data-conversation-header hidden>
+                <div class="conversation-header__avatar" data-conversation-avatar>
+                    <span class="material-symbols-rounded" aria-hidden="true">forum</span>
+                </div>
+                <div class="conversation-header__meta">
+                    <h1 data-conversation-title>Conversation</h1>
+                    <p data-conversation-subtitle></p>
+                </div>
+                <button type="button" class="md-icon-button md-ripple" data-group-invite hidden>
+                    <span class="material-symbols-rounded" aria-hidden="true">person_add</span>
+                    <span class="sr-only">Invite to group</span>
+                </button>
+                <button type="button" class="md-icon-button md-ripple conversation-header__close" data-close-conversation>
+                    <span class="material-symbols-rounded" aria-hidden="true">close</span>
+                    <span class="sr-only">Close conversation</span>
+                </button>
+            </header>
+            <div class="conversation-body" data-conversation-body>
+                <div class="conversation-placeholder" data-conversation-placeholder>
+                    <span class="material-symbols-rounded" aria-hidden="true">chat</span>
+                    <h2>Select a conversation</h2>
+                    <p>Choose a chat from the list or invite someone new.</p>
+                </div>
+                <div class="message-feed" data-message-feed hidden></div>
+            </div>
+            <form class="composer" data-message-form novalidate>
+                <label class="sr-only" for="composer-input">Write a message</label>
+                <div class="composer__attachments" data-attachment-preview hidden></div>
+                <textarea id="composer-input" class="composer__input" placeholder="Message" rows="1" data-message-input></textarea>
+                <div class="composer__actions">
+                    <button type="button" class="md-icon-button md-ripple" data-attach-trigger>
+                        <span class="material-symbols-rounded" aria-hidden="true">attach_file</span>
+                        <span class="sr-only">Attach image</span>
+                    </button>
+                    <input type="file" accept="image/*" data-attachment-input hidden>
+                    <button type="submit" class="md-filled-button md-ripple" data-send-button>
+                        <span class="material-symbols-rounded" aria-hidden="true">send</span>
+                        <span>Send</span>
+                    </button>
+                </div>
+            </form>
+        </section>
+    </div>
+{% endblock %}
+{% block scripts %}
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" defer></script>
+    <script defer src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}

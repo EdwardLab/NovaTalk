@@ -1,0 +1,64 @@
+<header class="md-top-app-bar">
+  <a class="md-top-app-bar__brand md-ripple" href="{{ url_for('chat.inbox') }}">
+    <span class="material-symbols-rounded" aria-hidden="true">chat_bubble</span>
+    <span>NovaTalk</span>
+  </a>
+  <div class="md-top-app-bar__actions">
+
+    <button type="button"
+            class="md-icon-button md-ripple mobile-only"
+            data-toggle-inbox
+            title="Toggle sidebar"
+            aria-controls="primary-navigation"
+            aria-expanded="false">
+      <span class="material-symbols-rounded" aria-hidden="true">menu</span>
+      <span class="sr-only">Toggle sidebar</span>
+    </button>
+
+
+    <button type="button" class="md-icon-button md-ripple" data-theme-toggle>
+      <span class="material-symbols-rounded" data-theme-icon aria-hidden="true">dark_mode</span>
+      <span class="sr-only">Switch theme</span>
+    </button>
+
+
+    <a href="{{ url_for('auth.profile') }}" class="md-ripple" title="Open profile">
+      <span class="sr-only">Profile</span>
+      <div class="md-avatar" data-avatar-refresh="self" data-avatar-alt="{{ current_user.display_name }}">
+        {% if current_user.avatar_url %}
+          <img src="{{ current_user.avatar_url }}" alt="{{ current_user.display_name }}">
+        {% else %}
+          <span>{{ current_user.display_name[0] }}</span>
+        {% endif %}
+      </div>
+    </a>
+
+
+    <a href="{{ url_for('auth.logout') }}" class="md-filled-button md-ripple">
+      <span class="material-symbols-rounded" aria-hidden="true">logout</span>
+      <span>Log out</span>
+    </a>
+  </div>
+</header>
+
+
+<nav id="primary-navigation" class="md-drawer">
+  <ul class="md-drawer__list">
+    <li><a class="md-ripple" href="{{ url_for('chat.inbox') }}">
+      <span class="material-symbols-rounded" aria-hidden="true">inbox</span>
+      <span>Inbox</span>
+    </a></li>
+    <li><a class="md-ripple" href="{{ url_for('chat.friends') }}">
+      <span class="material-symbols-rounded" aria-hidden="true">group</span>
+      <span>Friends</span>
+    </a></li>
+    <li><a class="md-ripple" href="{{ url_for('auth.profile') }}">
+      <span class="material-symbols-rounded" aria-hidden="true">person</span>
+      <span>Profile</span>
+    </a></li>
+    <li><a class="md-ripple" href="{{ url_for('auth.logout') }}">
+      <span class="material-symbols-rounded" aria-hidden="true">logout</span>
+      <span>Logout</span>
+    </a></li>
+  </ul>
+</nav>

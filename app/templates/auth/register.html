@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block title %}Register · NovaTalk{% endblock %}
+{% block content %}
+<div class="auth-shell auth-shell--wide">
+    <section class="surface-card transition-layer">
+        <div class="hero-card">
+            <div>
+                <h1 class="hero-card__title">Create your NovaTalk account</h1>
+                <p class="hero-card__body">Set up your profile so teammates know who is on the other side of the message.</p>
+            </div>
+        </div>
+        <form method="post" novalidate class="form-grid form-grid--two">
+            {{ form.hidden_tag() }}
+            <div class="input-field">
+                <label for="display_name">Display name</label>
+                {{ form.display_name(id='display_name', class_='input-field__control') }}
+                {% for error in form.display_name.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="input-field">
+                <label for="username">Username</label>
+                {{ form.username(id='username', class_='input-field__control', placeholder='yourname') }}
+                {% for error in form.username.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="input-field">
+                <label for="email">Email</label>
+                {{ form.email(id='email', class_='input-field__control') }}
+                {% for error in form.email.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="input-field">
+                <label for="bio">Bio</label>
+                {{ form.bio(id='bio', class_='input-field__control', rows='3') }}
+                {% for error in form.bio.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="input-field">
+                <label for="password">Password</label>
+                {{ form.password(id='password', class_='input-field__control') }}
+                {% for error in form.password.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="input-field">
+                <label for="confirm_password">Confirm password</label>
+                {{ form.confirm_password(id='confirm_password', class_='input-field__control') }}
+                {% for error in form.confirm_password.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="form-grid" style="grid-column: 1 / -1;">
+                {{ form.submit(class_='md-filled-button md-ripple button-block') }}
+            </div>
+        </form>
+        <p class="auth-footer">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></p>
+    </section>
+</div>
+{% endblock %}

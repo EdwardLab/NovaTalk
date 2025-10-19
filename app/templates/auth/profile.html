@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+{% block title %}Profile · NovaTalk{% endblock %}
+{% block content %}
+{% include 'partials/topbar.html' %}
+<div class="layout-grid">
+    <aside class="sidebar surface-card tablet-hidden" id="primary-navigation">
+        <div class="sidebar__header">
+            <div class="md-avatar" data-avatar-refresh="self" data-avatar-alt="{{ current_user.display_name }}">
+                {% if current_user.avatar_url %}
+                    <img src="{{ current_user.avatar_url }}" alt="{{ current_user.display_name }}">
+                {% else %}
+                    <span>{{ current_user.display_name[0] }}</span>
+                {% endif %}
+            </div>
+            <div>
+                <h2 class="surface-card__title">{{ current_user.display_name }}</h2>
+                <p class="surface-card__subtitle">{{ '@' ~ current_user.username.lstrip('@') }}</p>
+            </div>
+        </div>
+        <p class="muted-text">Keep your profile up to date so collaborators can find you quickly and recognise your avatar in the inbox.</p>
+        <div class="fade-divider"></div>
+        <div class="md-chip-set">
+            <span class="md-chip"><span class="material-symbols-rounded" aria-hidden="true">verified_user</span> Secure by default</span>
+            <span class="md-chip"><span class="material-symbols-rounded" aria-hidden="true">palette</span> Theme aware</span>
+            <span class="md-chip"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span> Instant preview</span>
+        </div>
+    </aside>
+    <section class="surface-card form-card transition-layer" style="grid-column: span 2;">
+        <div>
+            <h1 class="hero-card__title" style="text-align:left;">Profile settings</h1>
+            <p class="hero-card__body" style="text-align:left;">Update how people see you across NovaTalk. Upload a square avatar, tweak the crop, and keep your contact details current.</p>
+        </div>
+        <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>
+            {{ form.hidden_tag() }}
+            <input type="hidden" name="avatar_offset_x" data-avatar-offset-x value="0">
+            <input type="hidden" name="avatar_offset_y" data-avatar-offset-y value="0">
+            <input type="hidden" name="avatar_scale" data-avatar-scale value="1">
+            <div class="avatar-controls">
+                <div class="avatar-controls__primary">
+                    <div class="avatar-preview" data-avatar-container>
+                        {% if current_user.avatar_url %}
+                            <img src="{{ current_user.avatar_url }}" alt="Avatar preview" class="avatar-preview__image" data-avatar-preview>
+                            <div class="avatar-preview__placeholder" data-avatar-placeholder hidden>{{ current_user.display_name[0] }}</div>
+                        {% else %}
+                            <img src="" alt="Avatar preview" class="avatar-preview__image" data-avatar-preview hidden>
+                            <div class="avatar-preview__placeholder" data-avatar-placeholder>{{ current_user.display_name[0] }}</div>
+                        {% endif %}
+                    </div>
+                    <label class="md-filled-button md-ripple" for="avatar-input">
+                        <span class="material-symbols-rounded" aria-hidden="true">upload</span>
+                        <span>Upload avatar</span>
+                    </label>
+                    <input id="avatar-input" type="file" name="avatar" accept="image/*" data-avatar-input class="hidden">
+                    <div class="range-field hidden" data-avatar-zoom-container>
+                        <label for="avatar-zoom">Zoom</label>
+                        <input type="range" id="avatar-zoom" name="avatar_zoom" min="1" max="2.4" step="0.01" value="1" data-avatar-zoom disabled class="avatar-controls__slider">
+                    </div>
+                    <p class="muted-text">Drag the image to adjust the crop. Supported formats: PNG, JPG, up to {{ config['MAX_UPLOAD_MB'] }} MB.</p>
+                </div>
+                <div class="avatar-controls__preview">
+                    <div class="avatar-live-preview" data-avatar-live-preview-container>
+                        {% if current_user.avatar_url %}
+                            <img src="{{ current_user.avatar_url }}" alt="Avatar live preview" data-avatar-live-preview>
+                            <div class="avatar-live-preview__placeholder" data-avatar-live-placeholder hidden>{{ current_user.display_name[0] }}</div>
+                        {% else %}
+                            <img src="" alt="Avatar live preview" data-avatar-live-preview hidden>
+                            <div class="avatar-live-preview__placeholder" data-avatar-live-placeholder>{{ current_user.display_name[0] }}</div>
+                        {% endif %}
+                    </div>
+                    <p class="muted-text muted-text--small">Live preview updates as you drag.</p>
+                </div>
+            </div>
+            <div class="form-grid">
+                <div class="input-field">
+                    <label for="display_name">Display name</label>
+                    {{ form.display_name(id='display_name', class_='input-field__control') }}
+                    {% for error in form.display_name.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                <div class="input-field">
+                    <label for="username">Username</label>
+                    {{ form.username(id='username', class_='input-field__control') }}
+                    {% for error in form.username.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                <div class="input-field">
+                    <label for="email">Email</label>
+                    {{ form.email(id='email', class_='input-field__control') }}
+                    {% for error in form.email.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                <div class="input-field" style="grid-column: 1 / -1;">
+                    <label for="bio">Bio</label>
+                    {{ form.bio(id='bio', class_='input-field__control', rows='4') }}
+                    {% for error in form.bio.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div style="grid-column: 1 / -1;">
+                {{ form.submit(class_='md-filled-button md-ripple button-block') }}
+            </div>
+        </form>
+    </section>
+</div>
+{% endblock %}

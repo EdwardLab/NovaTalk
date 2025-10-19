@@ -1,0 +1,1770 @@
+(function () {
+    const root = document.querySelector('[data-chat-app]');
+    if (!root) {
+        return;
+    }
+
+    const stateElement = document.getElementById('nova-initial-state');
+    let bootState = {};
+    try {
+        bootState = JSON.parse(stateElement?.textContent || '{}');
+    } catch (error) {
+        console.error('Failed to parse initial state payload.', error);
+    }
+
+    const state = {
+        user: bootState.user || {},
+        chats: Array.isArray(bootState.chats) ? bootState.chats : [],
+        contacts: bootState.contacts || { friends: [], incoming: [], outgoing: [] },
+        ui: {
+            activeChatId: bootState.ui?.activeChatId || null,
+            activeTab: bootState.ui?.activeTab || 'chats',
+            pendingCount: bootState.ui?.pendingCount || 0,
+            pendingGroupInvites: bootState.ui?.pendingGroupInvites || 0,
+        },
+    };
+
+    if (!state.contacts.group_invites) {
+        state.contacts.group_invites = { incoming: [], outgoing: [] };
+    }
+
+    if (typeof window.NovaTalk?.requestNotificationPermission === 'function') {
+        window.NovaTalk.requestNotificationPermission();
+    }
+
+    const elements = {
+        toastHost: root.querySelector('[data-toast-host]'),
+        tabTriggers: Array.from(root.querySelectorAll('[data-tab-trigger]')),
+        tabPanels: Array.from(root.querySelectorAll('[data-tab-panel]')),
+        chatList: root.querySelector('[data-chat-list]'),
+        chatsCount: root.querySelector('[data-chats-count]'),
+        pendingBadge: root.querySelector('[data-pending-count]'),
+        pendingBadgeInline: root.querySelector('[data-pending-count-inline]'),
+        newChatButton: root.querySelector('[data-new-chat]'),
+        sidebar: root.querySelector('[data-sidebar]'),
+        messageFeed: root.querySelector('[data-message-feed]'),
+        conversationPlaceholder: root.querySelector('[data-conversation-placeholder]'),
+        conversationHeader: root.querySelector('[data-conversation-header]'),
+        conversationTitle: root.querySelector('[data-conversation-title]'),
+        conversationSubtitle: root.querySelector('[data-conversation-subtitle]'),
+        conversationAvatar: root.querySelector('[data-conversation-avatar]'),
+        closeConversation: root.querySelector('[data-close-conversation]'),
+        composerForm: root.querySelector('[data-message-form]'),
+        composerInput: root.querySelector('[data-message-input]'),
+        sendButton: root.querySelector('[data-send-button]'),
+        attachmentTrigger: root.querySelector('[data-attach-trigger]'),
+        attachmentInput: root.querySelector('[data-attachment-input]'),
+        attachmentPreview: root.querySelector('[data-attachment-preview]'),
+        contactsSearchForm: root.querySelector('[data-contacts-search]'),
+        contactsSearchInput: root.querySelector('[data-contacts-search-input]'),
+        contactsResults: root.querySelector('[data-contacts-results]'),
+        incomingList: root.querySelector('[data-incoming-list]'),
+        outgoingList: root.querySelector('[data-outgoing-list]'),
+        friendsList: root.querySelector('[data-friends-list]'),
+        groupIncomingList: root.querySelector('[data-group-invite-incoming]'),
+        groupOutgoingList: root.querySelector('[data-group-invite-outgoing]'),
+        groupCreateForm: root.querySelector('[data-group-create-form]'),
+        groupCreateName: root.querySelector('[data-group-create-name]'),
+        groupCreateInvitees: root.querySelector('[data-group-create-invitees]'),
+        profileAvatarSmall: root.querySelector('[data-profile-avatar]'),
+        profileAvatarLarge: root.querySelector('[data-profile-avatar-large]'),
+        profileName: root.querySelector('[data-profile-name]'),
+        profileUsername: root.querySelector('[data-profile-username]'),
+        profilePresence: root.querySelector('[data-presence-text]'),
+        profilePresenceDot: root.querySelector('[data-presence-indicator]'),
+        logoutButton: root.querySelector('[data-logout]'),
+        profileForm: root.querySelector('[data-profile-form]'),
+        profileDisplayName: root.querySelector('[data-profile-display-name]'),
+        profileBio: root.querySelector('[data-profile-bio]'),
+        profileBioCount: root.querySelector('[data-profile-bio-count]'),
+        profileEmail: root.querySelector('[data-profile-email]'),
+        profileSave: root.querySelector('[data-profile-save]'),
+        groupInviteButton: root.querySelector('[data-group-invite]'),
+    };
+
+    const messageStore = new Map();
+    const pendingAttachments = [];
+    let viewer = null;
+    let socket = null;
+
+    const getMessageFeed = () => {
+        const feed = root.querySelector('[data-message-feed]');
+        if (feed && feed !== elements.messageFeed) {
+            elements.messageFeed = feed;
+        }
+        return feed;
+    };
+
+    const handleMediaLoad = () => {
+        scrollToBottom(true);
+    };
+
+    const observeMessageMedia = (container) => {
+        if (!container) {
+            return;
+        }
+        const mediaNodes = Array.from(container.querySelectorAll('img'));
+        mediaNodes.forEach((node) => {
+            if (node.dataset.scrollObserverAttached === 'true') {
+                return;
+            }
+            node.dataset.scrollObserverAttached = 'true';
+            if (node.complete) {
+                requestAnimationFrame(() => scrollToBottom(true));
+                return;
+            }
+            node.addEventListener('load', handleMediaLoad, { once: true });
+            node.addEventListener('error', handleMediaLoad, { once: true });
+        });
+    };
+
+    const formatTime = (value) => {
+        if (!value) {
+            return '';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    const formatRelativeDate = (value) => {
+        if (!value) {
+            return '';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+        const today = new Date();
+        const sameDay =
+            date.getFullYear() === today.getFullYear() &&
+            date.getMonth() === today.getMonth() &&
+            date.getDate() === today.getDate();
+        if (sameDay) {
+            return formatTime(value);
+        }
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+
+    const ensureArray = (value) => (Array.isArray(value) ? value : []);
+
+    const getMessagePreview = (message) => {
+        if (!message) {
+            return '';
+        }
+        const body = typeof message.body === 'string' ? message.body.trim() : '';
+        if (body) {
+            return body.length > 140 ? `${body.slice(0, 137)}…` : body;
+        }
+        if (ensureArray(message.attachments).length) {
+            return '📷 Photo';
+        }
+        return 'New message';
+    };
+
+    const setAvatar = (target, payload) => {
+        if (!target) {
+            return;
+        }
+        const display = payload?.display || '';
+        const avatar = payload?.avatar;
+        target.innerHTML = '';
+        target.classList.remove('is-initials');
+        if (avatar) {
+            const img = document.createElement('img');
+            img.src = avatar;
+            img.alt = display || 'Avatar';
+            target.appendChild(img);
+            return;
+        }
+        const initials = (display || 'U')
+            .split(' ')
+            .map((chunk) => chunk.trim()[0])
+            .filter(Boolean)
+            .slice(0, 2)
+            .join('')
+            .toUpperCase();
+        target.classList.add('is-initials');
+        target.textContent = initials || 'U';
+    };
+
+    const showToast = (message, variant = 'info') => {
+        if (!elements.toastHost || !message) {
+            return;
+        }
+        const toast = document.createElement('div');
+        toast.className = `toast toast--${variant}`;
+        toast.textContent = message;
+        elements.toastHost.appendChild(toast);
+        requestAnimationFrame(() => {
+            toast.classList.add('is-visible');
+        });
+        setTimeout(() => {
+            toast.classList.remove('is-visible');
+            setTimeout(() => toast.remove(), 260);
+        }, 3800);
+    };
+
+    const syncMobileDrawer = () => {
+        const isMobile = window.matchMedia('(max-width: 960px)').matches;
+        if (!isMobile) {
+            document.body.classList.remove('mobile-primary-open');
+            return;
+        }
+        if (state.ui.activeTab && state.ui.activeTab !== 'chats') {
+            document.body.classList.add('mobile-primary-open');
+            return;
+        }
+        if (state.ui.activeChatId) {
+            document.body.classList.remove('mobile-primary-open');
+        } else {
+            document.body.classList.add('mobile-primary-open');
+        }
+    };
+
+    const updatePresence = (text, status) => {
+        if (elements.profilePresence) {
+            elements.profilePresence.textContent = text;
+        }
+        if (elements.profilePresenceDot) {
+            elements.profilePresenceDot.dataset.status = status || 'offline';
+        }
+    };
+
+    const switchTab = (tabName) => {
+        state.ui.activeTab = tabName;
+        elements.tabTriggers.forEach((trigger) => {
+            if (trigger.dataset.tabTrigger === tabName) {
+                trigger.classList.add('is-active');
+            } else {
+                trigger.classList.remove('is-active');
+            }
+        });
+        elements.tabPanels.forEach((panel) => {
+            const isActive = panel.dataset.tabPanel === tabName;
+            panel.hidden = !isActive;
+            panel.classList.toggle('is-visible', isActive);
+        });
+        const isContactsView = tabName !== 'chats';
+        root.classList.toggle('is-contacts', isContactsView);
+        syncMobileDrawer();
+    };
+
+    const renderProfile = () => {
+        if (elements.profileName) {
+            elements.profileName.textContent = state.user.display_name || 'Guest';
+        }
+        if (elements.profileUsername) {
+            elements.profileUsername.textContent = state.user.username || '';
+        }
+        if (elements.profileEmail) {
+            elements.profileEmail.value = state.user.email || '';
+        }
+        setAvatar(elements.profileAvatarSmall, {
+            avatar: state.user.avatar_url || state.user.avatar,
+            display: state.user.display_name,
+        });
+        setAvatar(elements.profileAvatarLarge, {
+            avatar: state.user.avatar_url || state.user.avatar,
+            display: state.user.display_name,
+        });
+    };
+
+    const renderProfileForm = () => {
+        if (elements.profileDisplayName) {
+            elements.profileDisplayName.value = state.user.display_name || '';
+        }
+        if (elements.profileBio) {
+            elements.profileBio.value = state.user.bio || '';
+            if (elements.profileBioCount) {
+                elements.profileBioCount.textContent = String(elements.profileBio.value.length);
+            }
+        }
+    };
+
+    const renderPendingBadges = () => {
+        const friendPending = state.ui.pendingCount || 0;
+        const groupPending = state.ui.pendingGroupInvites || 0;
+        const pending = friendPending + groupPending;
+        const toggle = (target) => {
+            if (!target) {
+                return;
+            }
+            if (pending > 0) {
+                target.textContent = String(pending);
+                target.hidden = false;
+            } else {
+                target.hidden = true;
+            }
+        };
+        toggle(elements.pendingBadge);
+        toggle(elements.pendingBadgeInline);
+    };
+
+    const renderChats = () => {
+        const container = elements.chatList;
+        if (!container) {
+            return;
+        }
+        container.innerHTML = '';
+        const chats = ensureArray(state.chats);
+        if (chats.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            empty.innerHTML = `
+                <span class="material-symbols-rounded" aria-hidden="true">forum</span>
+                <p>No chats yet. Start a conversation from Contacts.</p>
+            `;
+            container.appendChild(empty);
+        } else {
+            const list = document.createElement('ul');
+            list.className = 'chat-roster__list';
+            chats.forEach((chat) => {
+                const item = document.createElement('li');
+                item.className = 'chat-roster__item';
+                item.dataset.chatId = chat.id;
+                item.tabIndex = 0;
+                const avatar = document.createElement('div');
+                avatar.className = 'chat-roster__avatar';
+                setAvatar(avatar, {
+                    avatar: chat.is_group ? chat.avatar : chat.partner?.avatar,
+                    display: chat.name || chat.partner?.display_name,
+                });
+                const body = document.createElement('div');
+                body.className = 'chat-roster__body';
+                const title = document.createElement('h4');
+                title.className = 'chat-roster__title';
+                title.textContent = chat.name || chat.partner?.display_name || 'Conversation';
+                const preview = document.createElement('p');
+                preview.className = 'chat-roster__preview';
+                let previewText = chat.last_message?.body || '';
+                if (!previewText && ensureArray(chat.last_message?.attachments).length) {
+                    previewText = '📷 Photo';
+                }
+                preview.textContent = previewText || 'No messages yet';
+                const meta = document.createElement('span');
+                meta.className = 'chat-roster__meta';
+                meta.textContent = formatRelativeDate(chat.last_message?.created_at || chat.updated_at);
+                body.appendChild(title);
+                body.appendChild(preview);
+                body.appendChild(meta);
+                if (String(chat.id) === String(state.ui.activeChatId)) {
+                    item.classList.add('is-active');
+                }
+                item.appendChild(avatar);
+                item.appendChild(body);
+                list.appendChild(item);
+            });
+            container.appendChild(list);
+        }
+        if (elements.chatsCount) {
+            elements.chatsCount.textContent = String(chats.length);
+            elements.chatsCount.hidden = chats.length === 0;
+        }
+    };
+
+    const renderContactList = (list, target, emptyText) => {
+        if (!target) {
+            return;
+        }
+        target.innerHTML = '';
+        if (!list.length) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-state small';
+            empty.innerHTML = `<p>${emptyText}</p>`;
+            target.appendChild(empty);
+            return;
+        }
+        list.forEach((entry) => {
+            const card = document.createElement('article');
+            card.className = 'contact-card';
+            const avatar = document.createElement('div');
+            avatar.className = 'contact-card__avatar';
+            setAvatar(avatar, { avatar: entry.user?.avatar, display: entry.user?.display_name });
+            const body = document.createElement('div');
+            body.className = 'contact-card__body';
+            const title = document.createElement('h5');
+            title.textContent = entry.user?.display_name || 'User';
+            const subtitle = document.createElement('p');
+            subtitle.textContent = entry.user?.username || '';
+            body.appendChild(title);
+            body.appendChild(subtitle);
+            const actions = document.createElement('div');
+            actions.className = 'contact-card__actions';
+            if (entry.status === 'pending' && entry.user) {
+                const accept = document.createElement('button');
+                accept.type = 'button';
+                accept.className = 'md-filled-button md-ripple';
+                accept.dataset.contactAction = 'accept';
+                accept.dataset.requestId = entry.id;
+                accept.textContent = 'Accept';
+                actions.appendChild(accept);
+                const decline = document.createElement('button');
+                decline.type = 'button';
+                decline.className = 'md-text-button md-ripple';
+                decline.dataset.contactAction = 'decline';
+                decline.dataset.requestId = entry.id;
+                decline.textContent = 'Decline';
+                actions.appendChild(decline);
+            } else if (entry.direction === 'outgoing') {
+                const cancel = document.createElement('button');
+                cancel.type = 'button';
+                cancel.className = 'md-text-button md-ripple';
+                cancel.dataset.contactAction = 'cancel';
+                cancel.dataset.requestId = entry.id;
+                cancel.textContent = 'Cancel request';
+                actions.appendChild(cancel);
+            } else if (entry.user) {
+                const message = document.createElement('button');
+                message.type = 'button';
+                message.className = 'md-filled-button md-ripple';
+                message.dataset.contactAction = 'chat';
+                message.dataset.userId = entry.user.id;
+                message.textContent = 'Message';
+                actions.appendChild(message);
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'md-text-button md-ripple';
+                remove.dataset.contactAction = 'remove';
+                remove.dataset.userId = entry.user.id;
+                remove.textContent = 'Remove';
+                actions.appendChild(remove);
+            }
+            card.appendChild(avatar);
+            card.appendChild(body);
+            card.appendChild(actions);
+            target.appendChild(card);
+        });
+    };
+
+    const renderGroupInviteList = (list, target, type) => {
+        if (!target) {
+            return;
+        }
+        target.innerHTML = '';
+        const invites = ensureArray(list);
+        if (!invites.length) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-state small';
+            empty.innerHTML = `<p>${
+                type === 'incoming' ? 'No group invites.' : 'No pending group invites.'
+            }</p>`;
+            target.appendChild(empty);
+            return;
+        }
+        invites.forEach((entry) => {
+            const card = document.createElement('article');
+            card.className = 'contact-card';
+            const body = document.createElement('div');
+            body.className = 'contact-card__body';
+            const title = document.createElement('h5');
+            const groupName = entry.group_name || entry.chat_name || 'Group chat';
+            title.textContent = groupName;
+            const subtitle = document.createElement('p');
+            const parts = [];
+            if (type === 'incoming' && entry.inviter) {
+                parts.push(`Invited by ${entry.inviter.display_name || entry.inviter.username || 'a friend'}`);
+            }
+            if (type === 'outgoing' && entry.invitee) {
+                parts.push(`For ${entry.invitee.display_name || entry.invitee.username || 'a user'}`);
+            }
+            if (entry.created_at) {
+                parts.push(`Sent ${formatRelativeDate(entry.created_at)}`);
+            }
+            subtitle.textContent = parts.join(' · ');
+            body.appendChild(title);
+            body.appendChild(subtitle);
+            const actions = document.createElement('div');
+            actions.className = 'contact-card__actions';
+            if (type === 'incoming') {
+                const accept = document.createElement('button');
+                accept.type = 'button';
+                accept.className = 'md-filled-button md-ripple';
+                accept.dataset.groupInviteAction = 'accept';
+                accept.dataset.groupInviteId = entry.id;
+                accept.textContent = 'Join group';
+                const decline = document.createElement('button');
+                decline.type = 'button';
+                decline.className = 'md-text-button md-ripple';
+                decline.dataset.groupInviteAction = 'decline';
+                decline.dataset.groupInviteId = entry.id;
+                decline.textContent = 'Decline';
+                actions.appendChild(accept);
+                actions.appendChild(decline);
+            } else {
+                const note = document.createElement('span');
+                note.className = 'contact-card__note';
+                note.textContent = 'Pending approval';
+                actions.appendChild(note);
+            }
+            card.appendChild(body);
+            card.appendChild(actions);
+            target.appendChild(card);
+        });
+    };
+
+    const renderGroupInvites = () => {
+        const incoming = ensureArray(state.contacts?.group_invites?.incoming);
+        const outgoing = ensureArray(state.contacts?.group_invites?.outgoing);
+        renderGroupInviteList(incoming, elements.groupIncomingList, 'incoming');
+        renderGroupInviteList(outgoing, elements.groupOutgoingList, 'outgoing');
+    };
+
+    const renderContacts = () => {
+        const incoming = ensureArray(state.contacts?.incoming).map((item) => ({ ...item, direction: 'incoming' }));
+        const outgoing = ensureArray(state.contacts?.outgoing).map((item) => ({ ...item, direction: 'outgoing' }));
+        const friends = ensureArray(state.contacts?.friends).map((item) => ({ ...item, direction: 'friend' }));
+        renderContactList(incoming, elements.incomingList, 'No pending requests.');
+        renderContactList(outgoing, elements.outgoingList, "You haven't sent any requests.");
+        renderContactList(friends, elements.friendsList, 'Add a friend to start chatting instantly.');
+        renderGroupInvites();
+        renderPendingBadges();
+    };
+
+    const renderSearchResults = (results) => {
+        if (!elements.contactsResults) {
+            return;
+        }
+        elements.contactsResults.innerHTML = '';
+        const list = ensureArray(results);
+        if (!list.length) {
+            elements.contactsResults.hidden = false;
+            elements.contactsResults.innerHTML = '<p class="empty-state small">No users found.</p>';
+            return;
+        }
+        elements.contactsResults.hidden = false;
+        list.forEach((user) => {
+            const card = document.createElement('article');
+            card.className = 'contact-result';
+            const avatar = document.createElement('div');
+            avatar.className = 'contact-result__avatar';
+            setAvatar(avatar, { avatar: user.avatar, display: user.display_name });
+            const body = document.createElement('div');
+            body.className = 'contact-result__body';
+            const title = document.createElement('h5');
+            title.textContent = user.display_name || 'User';
+            const subtitle = document.createElement('p');
+            subtitle.textContent = user.username || '';
+            body.appendChild(title);
+            body.appendChild(subtitle);
+            const action = document.createElement('button');
+            action.type = 'button';
+            action.className = 'md-filled-button md-ripple';
+            action.dataset.contactAction = 'add';
+            action.dataset.userId = user.id;
+            action.textContent = 'Add friend';
+            card.appendChild(avatar);
+            card.appendChild(body);
+            card.appendChild(action);
+            elements.contactsResults.appendChild(card);
+        });
+    };
+
+    const getMessagesForChat = (chatId) => {
+        const existing = messageStore.get(chatId);
+        if (existing) {
+            return existing;
+        }
+        const messages = [];
+        messageStore.set(chatId, messages);
+        return messages;
+    };
+
+    const dayKey = (value) => {
+        const date = new Date(value);
+        return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    };
+
+    const buildMessageElement = (message) => {
+        const isOutgoing = Number(message.sender?.id || message.sender_id) === Number(state.user.id);
+        const wrapper = document.createElement('article');
+        wrapper.className = 'message';
+        wrapper.dataset.messageId = message.id;
+        wrapper.dataset.chatId = message.chat_id;
+        if (isOutgoing) {
+            wrapper.classList.add('message--outgoing');
+        }
+        if (message.status === 'error') {
+            wrapper.classList.add('message--error');
+        }
+        const bubble = document.createElement('div');
+        bubble.className = 'message__bubble';
+        if (message.status === 'error') {
+            bubble.classList.add('is-error');
+        }
+        const text = document.createElement('p');
+        text.className = 'message__text';
+        text.textContent = message.body || '';
+        bubble.appendChild(text);
+        if (ensureArray(message.attachments).length) {
+            const attachments = document.createElement('div');
+            attachments.className = 'message__attachments';
+            message.attachments.forEach((attachment) => {
+                const link = document.createElement('a');
+                link.href = attachment.url || attachment.preview_url || attachment.download_url || '#';
+                link.addEventListener('click', (event) => event.preventDefault());
+                const img = document.createElement('img');
+                img.src = attachment.url || attachment.preview_url || attachment.download_url || attachment.dataUrl;
+                img.alt = attachment.filename || 'Attachment';
+                img.className = 'message__attachment-image';
+                link.appendChild(img);
+                attachments.appendChild(link);
+            });
+            bubble.appendChild(attachments);
+        }
+        const meta = document.createElement('div');
+        meta.className = 'message__meta';
+        const time = document.createElement('time');
+        time.className = 'message__time';
+        time.dateTime = message.created_at;
+        time.textContent = formatTime(message.created_at);
+        meta.appendChild(time);
+        if (isOutgoing) {
+            const status = document.createElement('span');
+            status.className = 'message__status';
+            status.dataset.messageStatus = message.status || 'pending';
+            status.textContent = message.statusLabel || 'Sending…';
+            meta.appendChild(status);
+        }
+        wrapper.appendChild(bubble);
+        wrapper.appendChild(meta);
+        return wrapper;
+    };
+
+    const refreshViewer = () => {
+        if (!window.Viewer || !elements.messageFeed) {
+            return;
+        }
+        if (viewer) {
+            viewer.destroy();
+            viewer = null;
+        }
+        if (!elements.messageFeed.querySelector('img')) {
+            return;
+        }
+        viewer = new window.Viewer(elements.messageFeed, {
+            toolbar: false,
+            navbar: false,
+            title: false,
+            transition: false,
+        });
+    };
+
+    // === Ultra Stable renderMessages(): Always scrolls to bottom ===
+    const renderMessages = (chatId, messages) => {
+        const messageFeed = getMessageFeed();
+        if (!messageFeed) {
+            console.warn('⚠️ No message feed found, cannot render messages');
+            return;
+        }
+
+        const sorted = ensureArray(messages).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        messageFeed.innerHTML = '';
+        let lastDay = null;
+
+        // --- Render each message ---
+        sorted.forEach((message) => {
+            const messageDay = dayKey(message.created_at);
+            if (lastDay !== messageDay) {
+                lastDay = messageDay;
+                const divider = document.createElement('div');
+                divider.className = 'message-divider';
+                divider.textContent = new Date(message.created_at).toLocaleDateString([], {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                });
+                messageFeed.appendChild(divider);
+            }
+            const node = buildMessageElement(message);
+            messageFeed.appendChild(node);
+        });
+
+        messageFeed.hidden = sorted.length === 0;
+        if (elements.conversationPlaceholder) {
+            elements.conversationPlaceholder.hidden = sorted.length > 0;
+        }
+
+        refreshViewer();
+
+        // === 强制滚动函数 ===
+        const forceScroll = () => {
+            requestAnimationFrame(() => {
+                messageFeed.scrollTop = messageFeed.scrollHeight;
+                messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: 'smooth' });
+            });
+        };
+
+        // === MutationObserver 自动保持在底部 ===
+        if (!messageFeed._observerBound) {
+            const observer = new MutationObserver(() => {
+                // 每当 DOM 变化时自动滚动到底
+                forceScroll();
+            });
+            observer.observe(messageFeed, { childList: true, subtree: true });
+            messageFeed._observerBound = true;
+            console.log('👁️ Bound MutationObserver for messageFeed');
+        }
+
+        // === 延迟滚动以等待渲染完成 ===
+        setTimeout(forceScroll, 150);
+
+        // === 图片加载后再次滚动 ===
+        messageFeed.querySelectorAll('img').forEach((img) => {
+            if (!img.dataset.scrollListener) {
+                img.dataset.scrollListener = 'true';
+                img.addEventListener('load', forceScroll, { once: true });
+                img.addEventListener('error', forceScroll, { once: true });
+            }
+        });
+
+        console.log('✅ renderMessages done, scroll synced');
+    };
+
+
+
+    const appendMessage = (message) => {
+        const messages = getMessagesForChat(message.chat_id);
+        const existingIndex = messages.findIndex((item) => item.id === message.id);
+        if (existingIndex >= 0) {
+            messages[existingIndex] = message;
+        } else {
+            messages.push(message);
+        }
+        if (String(message.chat_id) === String(state.ui.activeChatId)) {
+            renderMessages(message.chat_id, messages);
+        }
+    };
+
+    const setMessageStatus = (chatId, messageId, status, label) => {
+        const messages = getMessagesForChat(chatId);
+        const index = messages.findIndex((item) => item.id === messageId);
+        if (index < 0) {
+            return;
+        }
+        messages[index].status = status;
+        messages[index].statusLabel = label;
+        if (String(chatId) === String(state.ui.activeChatId)) {
+            renderMessages(chatId, messages);
+        }
+    };
+
+
+    const scrollToBottom = (smooth = false) => {
+        const feed = document.querySelector('[data-message-feed]');
+        const container = document.querySelector('[data-conversation-body]');
+        if (!feed || !container) return;
+
+        feed.hidden = false;
+
+        requestAnimationFrame(() => {
+            const scrollTarget = container.scrollHeight - container.clientHeight;
+            try {
+                container.scrollTo({
+                    top: scrollTarget > 0 ? scrollTarget : container.scrollHeight,
+                    behavior: smooth ? 'smooth' : 'auto',
+                });
+            } catch (err) {
+                container.scrollTop = container.scrollHeight;
+            }
+            console.debug("✅ scrollToBottom applied to conversation-body");
+        });
+    };
+
+
+    const markMessageDelivered = (tempId, payload) => {
+        if (!payload) {
+            return;
+        }
+        const messages = getMessagesForChat(payload.chat_id);
+        const optimisticIndex = messages.findIndex(
+            (item) => item.id === tempId || (item.client_ref && item.client_ref === tempId)
+        );
+        payload.client_ref = payload.client_ref || tempId;
+        payload.status = 'delivered';
+        payload.statusLabel = 'Delivered';
+        if (optimisticIndex >= 0) {
+            messages[optimisticIndex] = { ...messages[optimisticIndex], ...payload };
+        } else {
+            const existingIndex = messages.findIndex((item) => item.id === payload.id);
+            if (existingIndex >= 0) {
+                messages[existingIndex] = { ...messages[existingIndex], ...payload };
+            } else {
+                messages.push(payload);
+            }
+        }
+        if (String(payload.chat_id) === String(state.ui.activeChatId)) {
+            renderMessages(payload.chat_id, messages);
+        }
+    };
+
+    const renderAttachmentPreview = () => {
+        const container = elements.attachmentPreview;
+        if (!container) {
+            return;
+        }
+        container.innerHTML = '';
+        if (!pendingAttachments.length) {
+            container.hidden = true;
+            return;
+        }
+        const list = document.createElement('div');
+        list.className = 'composer__attachment-list';
+        pendingAttachments.forEach((attachment, index) => {
+            const item = document.createElement('div');
+            item.className = 'composer__attachment-item';
+            const img = document.createElement('img');
+            img.src = attachment.previewUrl;
+            img.alt = attachment.name;
+            item.appendChild(img);
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'md-icon-button md-ripple';
+            remove.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">close</span>';
+            remove.title = 'Remove attachment';
+            remove.dataset.removeAttachment = String(index);
+            item.appendChild(remove);
+            list.appendChild(item);
+        });
+        container.appendChild(list);
+        container.hidden = false;
+    };
+
+    const clearComposer = () => {
+        if (elements.composerInput) {
+            elements.composerInput.value = '';
+            elements.composerInput.style.height = '';
+        }
+        pendingAttachments.splice(0, pendingAttachments.length);
+        renderAttachmentPreview();
+    };
+
+    const openChat = (chatId) => {
+        if (!chatId) {
+            return;
+        }
+        if (String(state.ui.activeChatId) === String(chatId)) {
+            return;
+        }
+        state.ui.activeChatId = chatId;
+        renderChats();
+        clearComposer();
+        syncMobileDrawer();
+        const chat = state.chats.find((item) => String(item.id) === String(chatId));
+        if (elements.conversationHeader) {
+            elements.conversationHeader.hidden = false;
+        }
+        if (elements.conversationTitle) {
+            elements.conversationTitle.textContent = chat?.name || chat?.partner?.display_name || 'Conversation';
+        }
+        if (elements.conversationSubtitle) {
+            const parts = [];
+            if (chat?.is_group) {
+                const memberCount = ensureArray(chat?.members).length;
+                parts.push(`${memberCount} participant${memberCount === 1 ? '' : 's'}`);
+            } else if (chat?.partner?.username) {
+                parts.push(chat.partner.username);
+            }
+            if (chat?.last_message?.created_at) {
+                parts.push(`Updated ${formatRelativeDate(chat.last_message.created_at)}`);
+            }
+            elements.conversationSubtitle.textContent = parts.join(' · ');
+        }
+        setAvatar(elements.conversationAvatar, {
+            avatar: chat?.is_group ? chat?.avatar : chat?.partner?.avatar,
+            display: chat?.name || chat?.partner?.display_name,
+        });
+        if (elements.groupInviteButton) {
+            const isGroupAdmin = ensureArray(chat?.members).some(
+                (member) =>
+                    Boolean(chat?.is_group) &&
+                    Number(member?.user?.id || member?.user_id) === Number(state.user.id) &&
+                    Boolean(member?.is_admin)
+            );
+            elements.groupInviteButton.hidden = !isGroupAdmin;
+        }
+        const existingMessages = messageStore.get(chatId);
+        if (existingMessages) {
+            renderMessages(chatId, existingMessages);
+        } else {
+            if (elements.messageFeed) {
+                elements.messageFeed.innerHTML = '';
+                elements.messageFeed.hidden = true;
+            }
+            if (elements.conversationPlaceholder) {
+                elements.conversationPlaceholder.hidden = false;
+            }
+        }
+        if (!socket) {
+            return;
+        }
+        console.log('socket emit: chat:open', { chat_id: chatId });
+        socket.timeout(6000).emit('chat:open', { chat_id: chatId }, (response) => {
+            if (!response?.ok && response?.error) {
+                showToast(response.error, 'error');
+            }
+        scrollToBottom();
+        setTimeout(scrollToBottom, 200);
+        });
+    };
+
+    const notifyNewMessage = (message) => {
+        if (!message || Number(message.sender?.id) === Number(state.user.id)) {
+            return;
+        }
+        try {
+            if (typeof window.NovaTalk?.playNotificationTone === 'function') {
+                window.NovaTalk.playNotificationTone();
+            }
+        } catch (error) {
+            // ignore playback issues silently
+        }
+        if (!('Notification' in window)) {
+            return;
+        }
+        if (Notification.permission === 'default') {
+            try {
+                window.NovaTalk?.requestNotificationPermission?.();
+            } catch (error) {
+                // ignore permission failures
+            }
+        }
+        if (Notification.permission !== 'granted') {
+            return;
+        }
+        const title = message.sender?.display_name || 'New message';
+        const body = getMessagePreview(message);
+        try {
+            const notification = new Notification(title, {
+                body,
+                tag: `chat-${message.chat_id}`,
+                renotify: true,
+                data: { chatId: message.chat_id },
+            });
+            notification.addEventListener('click', () => {
+                window.focus();
+                if (message.chat_id) {
+                    openChat(message.chat_id);
+                }
+                try {
+                    notification.close();
+                } catch (error) {
+                    // ignore close errors
+                }
+            });
+        } catch (error) {
+            // Notifications may fail silently in some environments
+        }
+    };
+
+    const closeConversation = () => {
+        state.ui.activeChatId = null;
+        renderChats();
+        if (elements.conversationHeader) {
+            elements.conversationHeader.hidden = true;
+        }
+        const messageFeed = getMessageFeed();
+        if (messageFeed) {
+            messageFeed.innerHTML = '';
+            messageFeed.hidden = true;
+        }
+        if (elements.conversationPlaceholder) {
+            elements.conversationPlaceholder.hidden = false;
+        }
+        if (elements.groupInviteButton) {
+            elements.groupInviteButton.hidden = true;
+        }
+        clearComposer();
+        syncMobileDrawer();
+    };
+
+    const handleSendMessage = () => {
+        if (!socket) {
+            showToast('You are offline. Please wait for reconnection.', 'error');
+            return;
+        }
+        const chatId = state.ui.activeChatId;
+        if (!chatId) {
+            showToast('Select a conversation first.', 'error');
+            return;
+        }
+        const text = (elements.composerInput?.value || '').trim();
+        if (!text && pendingAttachments.length === 0) {
+            showToast('Message cannot be empty.', 'error');
+            return;
+        }
+        const now = new Date().toISOString();
+        const tempId = `temp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const optimisticAttachments = pendingAttachments.map((item) => ({
+            preview_url: item.previewUrl,
+            filename: item.name,
+        }));
+        const optimisticMessage = {
+            id: tempId,
+            chat_id: chatId,
+            body: text,
+            created_at: now,
+            sender: { id: state.user.id, display_name: state.user.display_name },
+            attachments: optimisticAttachments,
+            status: 'pending',
+            statusLabel: 'Sending…',
+            client_ref: tempId,
+        };
+        const messages = getMessagesForChat(chatId);
+        messages.push(optimisticMessage);
+        renderMessages(chatId, messages);
+        scrollToBottom(true);
+        const payload = {
+            chat_id: chatId,
+            body: text,
+            attachments: pendingAttachments.map((item) => ({
+                name: item.name,
+                mimetype: item.mimetype,
+                data: item.dataUrl,
+            })),
+            client_ref: tempId,
+        };
+        elements.sendButton?.setAttribute('data-loading', 'true');
+        emitSocket('send_message', payload, (response) => {
+            elements.sendButton?.removeAttribute('data-loading');
+            if (!response?.ok) {
+                setMessageStatus(chatId, tempId, 'error', 'Failed');
+                showToast(response?.error || 'Failed to send message.', 'error');
+                return;
+            }
+            if (response.message) {
+                markMessageDelivered(tempId, response.message);
+            } else {
+                setMessageStatus(chatId, tempId, 'delivered', 'Delivered');
+            }
+            clearComposer();
+        });
+    };
+
+    const handleAttachmentSelection = async (files) => {
+        const queue = Array.from(files || []);
+        if (!queue.length) {
+            return;
+        }
+        for (const file of queue) {
+            if (!file.type.startsWith('image/')) {
+                showToast('Only image attachments are supported right now.', 'error');
+                continue;
+            }
+            const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('Unable to read file.'));
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(file);
+            });
+            pendingAttachments.push({
+                name: file.name,
+                mimetype: file.type,
+                dataUrl,
+                previewUrl: dataUrl,
+            });
+        }
+        renderAttachmentPreview();
+    };
+
+    const emitSocket = (eventName, payload, callback) => {
+        if (!socket) {
+            if (typeof callback === 'function') {
+                callback({ ok: false, error: 'Socket offline.' });
+            }
+            return;
+        }
+        try {
+            socket.timeout(8000).emit(eventName, payload, (error, response) => {
+                if (typeof callback === 'function') {
+                    if (error) {
+                        callback({ ok: false, error: error.message || 'Request timed out.' });
+                    } else {
+                        callback(response);
+                    }
+                }
+            });
+        } catch (error) {
+            console.error(`Socket emit failed for ${eventName}`, error);
+            if (typeof callback === 'function') {
+                callback({ ok: false, error: 'Socket error.' });
+            }
+        }
+    };
+
+    const applyState = (incomingState) => {
+        if (!incomingState) {
+            return;
+        }
+        if (incomingState.user) {
+            state.user = incomingState.user;
+        }
+        if (Array.isArray(incomingState.chats)) {
+            state.chats = incomingState.chats;
+        }
+        if (incomingState.contacts) {
+            state.contacts = incomingState.contacts;
+            if (!state.contacts.group_invites) {
+                state.contacts.group_invites = { incoming: [], outgoing: [] };
+            }
+        }
+        if (incomingState.ui?.pendingCount !== undefined) {
+            state.ui.pendingCount = incomingState.ui.pendingCount;
+        }
+        if (incomingState.ui?.pendingGroupInvites !== undefined) {
+            state.ui.pendingGroupInvites = incomingState.ui.pendingGroupInvites;
+        }
+        renderProfile();
+        renderProfileForm();
+        renderChats();
+        renderContacts();
+        syncMobileDrawer();
+    };
+
+    const handleChatHistory = (payload) => {
+        console.log('socket event: chat:history', payload);
+        if (!payload) {
+            return;
+        }
+        if (!payload.ok) {
+            if (payload.error) {
+                showToast(payload.error, 'error');
+            }
+            return;
+        }
+        if (!payload.chat_id) {
+            return;
+        }
+        const decorated = ensureArray(payload.messages).map((message) => {
+            const next = { ...message };
+            if (Number(next.sender?.id || next.sender_id) === Number(state.user.id)) {
+                next.status = 'delivered';
+                next.statusLabel = 'Delivered';
+            }
+            return next;
+        });
+        messageStore.set(payload.chat_id, decorated);
+        if (payload.chat) {
+            const index = state.chats.findIndex((chat) => chat.id === payload.chat.id);
+            if (index >= 0) {
+                state.chats[index] = payload.chat;
+            } else {
+                state.chats.unshift(payload.chat);
+            }
+            renderChats();
+        }
+        if (String(payload.chat_id) === String(state.ui.activeChatId)) {
+            renderMessages(payload.chat_id, decorated);
+        }
+    };
+
+    const handleIncomingMessage = (payload) => {
+        console.log('socket event: new_message', payload);
+        if (!payload?.chat_id) {
+            return;
+        }
+        const messages = getMessagesForChat(payload.chat_id);
+        const clientRef = payload.client_ref;
+        let index = messages.findIndex((item) => item.id === payload.id);
+        if (clientRef && index < 0) {
+            index = messages.findIndex((item) => item.client_ref === clientRef);
+        }
+        if (index >= 0) {
+            messages[index] = { ...messages[index], ...payload };
+        } else {
+            messages.push(payload);
+        }
+        if (payload.sender?.id === state.user.id) {
+            payload.status = 'delivered';
+            payload.statusLabel = 'Delivered';
+        } else {
+            payload.status = 'received';
+        }
+        payload.client_ref = payload.client_ref || (index >= 0 ? messages[index]?.client_ref : undefined);
+        appendMessage(payload);
+        if (String(payload.chat_id) === String(state.ui.activeChatId)) {
+            scrollToBottom(true);
+        }
+        const chatIndex = state.chats.findIndex((chat) => chat.id === payload.chat_id);
+        if (chatIndex >= 0) {
+            const chat = state.chats[chatIndex];
+            chat.last_message = payload;
+            chat.updated_at = payload.created_at;
+            state.chats.splice(chatIndex, 1);
+            state.chats.unshift(chat);
+        }
+        renderChats();
+        notifyNewMessage(payload);
+    };
+
+    const handleContactsUpdate = (payload) => {
+        console.log('socket event: contacts:update', payload);
+        if (!payload) {
+            return;
+        }
+        if (payload.contacts) {
+            state.contacts = payload.contacts;
+            if (!state.contacts.group_invites) {
+                state.contacts.group_invites = { incoming: [], outgoing: [] };
+            }
+        }
+        if (payload.pendingCount !== undefined) {
+            state.ui.pendingCount = payload.pendingCount;
+        }
+        if (payload.pendingGroupInvites !== undefined) {
+            state.ui.pendingGroupInvites = payload.pendingGroupInvites;
+        }
+        renderContacts();
+    };
+
+    const handleChatMemberUpdate = (payload) => {
+        console.log('socket event: chat:member_update', payload);
+        if (!payload?.chat_id) {
+            return;
+        }
+        const chatIndex = state.chats.findIndex((chat) => chat.id === payload.chat_id);
+        if (chatIndex < 0) {
+            return;
+        }
+        if (Array.isArray(payload.members)) {
+            state.chats[chatIndex].members = payload.members;
+        }
+        if (payload.chat) {
+            state.chats[chatIndex] = { ...state.chats[chatIndex], ...payload.chat };
+        }
+        renderChats();
+        if (String(state.ui.activeChatId) === String(payload.chat_id)) {
+            const activeChat = state.chats[chatIndex];
+            if (elements.conversationSubtitle) {
+                const memberCount = ensureArray(activeChat?.members).length;
+                const parts = [`${memberCount} participant${memberCount === 1 ? '' : 's'}`];
+                if (activeChat?.last_message?.created_at) {
+                    parts.push(`Updated ${formatRelativeDate(activeChat.last_message.created_at)}`);
+                }
+                elements.conversationSubtitle.textContent = parts.join(' · ');
+            }
+            if (elements.groupInviteButton) {
+                const isGroupAdmin = ensureArray(activeChat?.members).some(
+                    (member) =>
+                        Boolean(activeChat?.is_group) &&
+                        Number(member?.user?.id || member?.user_id) === Number(state.user.id) &&
+                        Boolean(member?.is_admin)
+                );
+                elements.groupInviteButton.hidden = !isGroupAdmin;
+            }
+        }
+    };
+
+    const handleFriendUpdate = (payload) => {
+        console.log('socket event: friend:update', payload);
+        if (payload?.pending_count !== undefined) {
+            state.ui.pendingCount = payload.pending_count;
+            renderPendingBadges();
+        }
+        if (payload?.action === 'request_received') {
+            showToast(`${payload.from_user?.display_name || 'A user'} sent you a friend request.`, 'info');
+        } else if (payload?.action === 'request_accepted') {
+            showToast(`${payload.from_user?.display_name || 'A user'} accepted your request.`, 'success');
+        } else if (payload?.action === 'request_declined') {
+            showToast(`${payload.from_user?.display_name || 'A user'} declined your request.`, 'error');
+        } else if (payload?.action === 'friend_removed') {
+            showToast(`${payload.from_user?.display_name || 'A user'} removed you as a friend.`, 'error');
+        } else if (payload?.message) {
+            showToast(payload.message);
+        }
+    };
+
+    const handleProfileUpdate = (payload) => {
+        console.log('socket event: profile:update', payload);
+        if (payload?.user) {
+            state.user = payload.user;
+            renderProfile();
+            renderProfileForm();
+            if (payload.user.avatar) {
+                try {
+                    window.NovaTalk.updateAvatarNodes?.(payload.user.avatar);
+                } catch (error) {
+                    // ignore avatar sync issues
+                }
+            }
+        }
+    };
+
+    const setupSocket = () => {
+        if (socket) {
+            return;
+        }
+        if (typeof window.io !== 'function') {
+            console.error('Socket.IO client unavailable.');
+            showToast('Realtime client missing. Please refresh.', 'error');
+            return;
+        }
+        socket = window.io({
+            transports: ['websocket', 'polling'],
+            withCredentials: true,
+            reconnection: true,
+            reconnectionDelay: 500,
+            reconnectionDelayMax: 5000,
+        });
+
+        socket.on('connect', () => {
+            console.log('socket event: connect');
+            console.log('✅ Connected to server');
+            updatePresence('Online', 'online');
+            showToast('Connected to NovaTalk.', 'success');
+            socket.emit('initialize', {}, (response) => {
+                if (response?.ok && response.state) {
+                    applyState(response.state);
+                    if (response.state.ui?.activeChatId) {
+                        openChat(response.state.ui.activeChatId);
+                    }
+                }
+            });
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.log('socket event: disconnect', reason);
+            updatePresence('Offline', 'offline');
+            showToast('Connection lost. Attempting to reconnect…', 'error');
+        });
+
+        socket.io.on('reconnect_attempt', () => {
+            console.log('socket manager: reconnect_attempt');
+            updatePresence('Reconnecting…', 'away');
+        });
+
+        socket.on('reconnect', () => {
+            console.log('socket event: reconnect');
+            updatePresence('Online', 'online');
+            showToast('Reconnected to NovaTalk.', 'success');
+            socket.emit('initialize', {}, (response) => {
+                if (response?.ok && response.state) {
+                    applyState(response.state);
+                    if (state.ui.activeChatId) {
+                        openChat(state.ui.activeChatId);
+                    }
+                }
+            });
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('socket event: connect_error', error);
+            updatePresence('Connection error', 'offline');
+        });
+
+        socket.off('chat:history');
+        socket.off('new_message');
+        socket.off('contacts:update');
+        socket.off('friend:update');
+        socket.off('profile:update');
+        socket.off('chat:typing');
+        socket.off('chat:member_update');
+
+        socket.on('chat:history', handleChatHistory);
+        socket.on('new_message', handleIncomingMessage);
+        socket.on('contacts:update', handleContactsUpdate);
+        socket.on('friend:update', handleFriendUpdate);
+        socket.on('profile:update', handleProfileUpdate);
+        socket.on('chat:member_update', handleChatMemberUpdate);
+        socket.on('chat:typing', (payload) => {
+            console.log('socket event: chat:typing', payload);
+        });
+    };
+
+    const bindEvents = () => {
+        elements.tabTriggers.forEach((trigger) => {
+            trigger.addEventListener('click', () => {
+                const tab = trigger.dataset.tabTrigger;
+                switchTab(tab);
+            });
+        });
+        if (elements.chatList) {
+            elements.chatList.addEventListener('click', (event) => {
+                const item = event.target.closest('[data-chat-id]');
+                if (!item) {
+                    return;
+                }
+                const chatId = Number(item.dataset.chatId);
+                switchTab('chats');
+                openChat(chatId);
+            });
+        }
+        if (elements.chatList) {
+            elements.chatList.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    const item = event.target.closest('[data-chat-id]');
+                    if (!item) {
+                        return;
+                    }
+                    event.preventDefault();
+                    openChat(Number(item.dataset.chatId));
+                }
+            });
+        }
+        if (elements.closeConversation) {
+            elements.closeConversation.addEventListener('click', () => {
+                closeConversation();
+            });
+        }
+        if (elements.newChatButton) {
+            elements.newChatButton.addEventListener('click', () => {
+                switchTab('contacts');
+                elements.contactsSearchInput?.focus();
+            });
+        }
+        if (elements.logoutButton) {
+            elements.logoutButton.addEventListener('click', () => {
+                const url = elements.logoutButton.getAttribute('data-logout-url');
+                if (url) {
+                    window.location.href = url;
+                }
+            });
+        }
+        if (elements.contactsSearchForm) {
+            elements.contactsSearchForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                const query = (elements.contactsSearchInput?.value || '').trim();
+                if (!query) {
+                    showToast('Enter a name or username to search.', 'error');
+                    return;
+                }
+                elements.contactsSearchForm.classList.add('is-loading');
+                emitSocket('contacts:search', { query }, (response) => {
+                    elements.contactsSearchForm.classList.remove('is-loading');
+                    if (!response?.ok) {
+                        showToast(response?.error || 'Search failed.', 'error');
+                        return;
+                    }
+                    renderSearchResults(response.results || []);
+                });
+            });
+        }
+        root.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-contact-action]');
+            if (!button) {
+                return;
+            }
+            const action = button.dataset.contactAction;
+            const requestId = Number(button.dataset.requestId);
+            const userId = Number(button.dataset.userId);
+            button.disabled = true;
+            const done = () => {
+                button.disabled = false;
+            };
+            switch (action) {
+                case 'accept':
+                    emitSocket('friend:respond', { request_id: requestId, action: 'accept' }, (response) => {
+                        done();
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to accept request.', 'error');
+                        }
+                    });
+                    break;
+                case 'decline':
+                    emitSocket('friend:respond', { request_id: requestId, action: 'decline' }, (response) => {
+                        done();
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to decline request.', 'error');
+                        }
+                    });
+                    break;
+                case 'cancel':
+                    emitSocket('friend:cancel', { request_id: requestId }, (response) => {
+                        done();
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to cancel request.', 'error');
+                        }
+                    });
+                    break;
+                case 'remove': {
+                    if (!userId) {
+                        done();
+                        return;
+                    }
+                    const friends = ensureArray(state.contacts?.friends);
+                    const friendEntry = friends.find(
+                        (entry) => Number(entry?.user?.id) === Number(userId)
+                    );
+                    const friendName =
+                        friendEntry?.user?.display_name || friendEntry?.user?.username || 'this friend';
+                    const confirmed = window.confirm(`Remove ${friendName} from your friends?`);
+                    if (!confirmed) {
+                        done();
+                        return;
+                    }
+                    emitSocket('friend:remove', { friend_id: userId }, (response) => {
+                        done();
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to remove friend.', 'error');
+                            return;
+                        }
+                        state.contacts.friends = friends.filter(
+                            (entry) => Number(entry?.user?.id) !== Number(userId)
+                        );
+                        renderContacts();
+                        showToast(`${friendName} removed from friends.`, 'info');
+                    });
+                    break;
+                }
+                case 'chat':
+                    emitSocket('chat:create', { type: 'direct', user_id: userId }, (response) => {
+                        done();
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to start chat.', 'error');
+                            return;
+                        }
+                        if (response.chat) {
+                            const existingIndex = state.chats.findIndex((chat) => chat.id === response.chat.id);
+                            if (existingIndex >= 0) {
+                                state.chats.splice(existingIndex, 1);
+                            }
+                            state.chats.unshift(response.chat);
+                            renderChats();
+                            switchTab('chats');
+                            openChat(response.chat.id);
+                        }
+                    });
+                    break;
+                case 'add':
+                    emitSocket('friend:send_request', { user_id: userId }, (response) => {
+                        done();
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to send request.', 'error');
+                        } else {
+                            showToast('Friend request sent.', 'success');
+                        }
+                    });
+                    break;
+                default:
+                    done();
+                    break;
+            }
+        });
+        root.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-group-invite-action]');
+            if (!button) {
+                return;
+            }
+            const action = button.dataset.groupInviteAction;
+            const inviteId = Number(button.dataset.groupInviteId);
+            if (!inviteId || !action) {
+                return;
+            }
+            button.disabled = true;
+            emitSocket('group:respond', { invite_id: inviteId, action }, (response) => {
+                button.disabled = false;
+                if (!response?.ok) {
+                    showToast(response?.error || 'Unable to process invite.', 'error');
+                    return;
+                }
+                state.contacts.group_invites.incoming = ensureArray(state.contacts.group_invites.incoming).filter(
+                    (invite) => invite.id !== inviteId
+                );
+                if (state.ui.pendingGroupInvites > 0) {
+                    state.ui.pendingGroupInvites -= 1;
+                }
+                renderContacts();
+                if (response.status === 'accepted' && response.chat) {
+                    const existingIndex = state.chats.findIndex((chat) => chat.id === response.chat.id);
+                    if (existingIndex >= 0) {
+                        state.chats.splice(existingIndex, 1);
+                    }
+                    state.chats.unshift(response.chat);
+                    renderChats();
+                    switchTab('chats');
+                    openChat(response.chat.id);
+                    showToast('Joined group chat.', 'success');
+                } else if (response.status === 'declined') {
+                    showToast('Declined group invite.', 'info');
+                }
+            });
+        });
+        if (elements.composerForm) {
+            elements.composerForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                handleSendMessage();
+                scrollToBottom(true);
+                setTimeout(scrollToBottom, 200);
+
+            });
+        }
+        if (elements.composerInput) {
+            elements.composerInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    handleSendMessage();
+                    scrollToBottom(true);
+                    setTimeout(scrollToBottom, 200);
+                }
+            });
+            elements.composerInput.addEventListener('input', () => {
+                elements.composerInput.style.height = 'auto';
+                elements.composerInput.style.height = `${elements.composerInput.scrollHeight}px`;
+            });
+        }
+        if (elements.attachmentTrigger && elements.attachmentInput) {
+            elements.attachmentTrigger.addEventListener('click', () => {
+                elements.attachmentInput.click();
+            });
+            elements.attachmentInput.addEventListener('change', async (event) => {
+                const files = event.target.files;
+                try {
+                    await handleAttachmentSelection(files);
+                } catch (error) {
+                    console.error('Attachment processing failed.', error);
+                    showToast('Unable to process attachment.', 'error');
+                }
+                elements.attachmentInput.value = '';
+            });
+        }
+        if (elements.attachmentPreview) {
+            elements.attachmentPreview.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-remove-attachment]');
+                if (!button) {
+                    return;
+                }
+                const index = Number(button.dataset.removeAttachment);
+                if (!Number.isNaN(index)) {
+                    pendingAttachments.splice(index, 1);
+                    renderAttachmentPreview();
+                }
+            });
+        }
+        if (elements.groupCreateForm) {
+            elements.groupCreateForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                const name = (elements.groupCreateName?.value || '').trim();
+                if (!name) {
+                    showToast('Group name is required.', 'error');
+                    return;
+                }
+                const inviteRaw = elements.groupCreateInvitees?.value || '';
+                const invitees = inviteRaw
+                    .split(',')
+                    .map((item) => item.trim().replace(/^@/, ''))
+                    .filter(Boolean);
+                elements.groupCreateForm.classList.add('is-loading');
+                emitSocket(
+                    'chat:create',
+                    { type: 'group', name, invitees },
+                    (response) => {
+                        elements.groupCreateForm.classList.remove('is-loading');
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to create group.', 'error');
+                            return;
+                        }
+                        if (elements.groupCreateName) {
+                            elements.groupCreateName.value = '';
+                        }
+                        if (elements.groupCreateInvitees) {
+                            elements.groupCreateInvitees.value = '';
+                        }
+                        if (response.chat) {
+                            const existingIndex = state.chats.findIndex((chat) => chat.id === response.chat.id);
+                            if (existingIndex >= 0) {
+                                state.chats.splice(existingIndex, 1);
+                            }
+                            state.chats.unshift(response.chat);
+                            renderChats();
+                            switchTab('chats');
+                            openChat(response.chat.id);
+                        }
+                        if (Array.isArray(response.invites)) {
+                            const existingOutgoing = ensureArray(state.contacts.group_invites.outgoing);
+                            const existingIds = new Set(existingOutgoing.map((invite) => invite.id));
+                            const fresh = response.invites.filter((invite) => !existingIds.has(invite.id));
+                            state.contacts.group_invites.outgoing = [...fresh, ...existingOutgoing];
+                            renderContacts();
+                        } else {
+                            renderContacts();
+                        }
+                        showToast('Group created.', 'success');
+                    }
+                );
+            });
+        }
+        if (elements.groupInviteButton) {
+            elements.groupInviteButton.addEventListener('click', () => {
+                if (!state.ui.activeChatId) {
+                    showToast('Open a group chat first.', 'error');
+                    return;
+                }
+                const activeChat = state.chats.find((chat) => chat.id === state.ui.activeChatId);
+                if (!activeChat?.is_group) {
+                    showToast('Invitations are only available in group chats.', 'error');
+                    return;
+                }
+                const input = window.prompt('Enter usernames to invite (comma separated)');
+                if (input === null) {
+                    return;
+                }
+                const invitees = input
+                    .split(',')
+                    .map((item) => item.trim().replace(/^@/, ''))
+                    .filter(Boolean);
+                if (!invitees.length) {
+                    showToast('No usernames provided.', 'error');
+                    return;
+                }
+                elements.groupInviteButton.setAttribute('data-loading', 'true');
+                emitSocket('group:invite', { chat_id: activeChat.id, invitees }, (response) => {
+                    elements.groupInviteButton.removeAttribute('data-loading');
+                    if (!response?.ok) {
+                        showToast(response?.error || 'Unable to send invites.', 'error');
+                        return;
+                    }
+                    if (Array.isArray(response.invites)) {
+                        const existingOutgoing = ensureArray(state.contacts.group_invites.outgoing);
+                        const existingIds = new Set(existingOutgoing.map((invite) => invite.id));
+                        const fresh = response.invites.filter((invite) => !existingIds.has(invite.id));
+                        state.contacts.group_invites.outgoing = [...fresh, ...existingOutgoing];
+                        renderContacts();
+                    }
+                    showToast('Invitations sent.', 'success');
+                });
+            });
+        }
+        if (elements.profileForm) {
+            elements.profileForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                const payload = {
+                    display_name: elements.profileDisplayName?.value || '',
+                    bio: elements.profileBio?.value || '',
+                };
+                emitSocket('me:update', payload, (response) => {
+                    if (!response?.ok) {
+                        showToast(response?.error || 'Failed to update profile.', 'error');
+                        return;
+                    }
+                    if (response.user) {
+                        state.user = response.user;
+                        renderProfile();
+                        renderProfileForm();
+                        showToast('Profile updated.', 'success');
+                    }
+                });
+            });
+        }
+        if (elements.profileBio && elements.profileBioCount) {
+            elements.profileBio.addEventListener('input', () => {
+                elements.profileBioCount.textContent = String(elements.profileBio.value.length);
+            });
+        }
+    };
+
+    switchTab(state.ui.activeTab || 'chats');
+    renderProfile();
+    renderProfileForm();
+    renderChats();
+    renderContacts();
+    if (state.ui.activeChatId) {
+        openChat(state.ui.activeChatId);
+    }
+    syncMobileDrawer();
+    const mobileQuery = window.matchMedia('(max-width: 960px)');
+    mobileQuery.addEventListener('change', syncMobileDrawer);
+    bindEvents();
+    setupSocket();
+})();

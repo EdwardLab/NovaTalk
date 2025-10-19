@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}Login · NovaTalk{% endblock %}
+{% block content %}
+<div class="auth-shell">
+    <section class="surface-card transition-layer">
+        <div class="hero-card">
+            <div>
+                <h1 class="hero-card__title">Welcome back</h1>
+                <p class="hero-card__body">Sign in to continue the conversation with your team and friends.</p>
+            </div>
+        </div>
+        <form method="post" novalidate class="form-grid">
+            {{ form.hidden_tag() }}
+            <div class="input-field">
+                <label for="username">Username or email</label>
+                {{ form.username(id='username', class_='input-field__control') }}
+                {% for error in form.username.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div class="input-field">
+                <label for="password">Password</label>
+                {{ form.password(id='password', class_='input-field__control') }}
+                {% for error in form.password.errors %}
+                    <p class="badge badge--danger">{{ error }}</p>
+                {% endfor %}
+            </div>
+            <div>
+                {{ form.submit(class_='md-filled-button md-ripple button-block') }}
+            </div>
+        </form>
+        <p class="auth-footer">New here? <a href="{{ url_for('auth.register') }}">Create your NovaTalk account</a></p>
+    </section>
+</div>
+{% endblock %}
