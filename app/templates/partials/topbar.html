@@ -15,12 +15,10 @@
       <span class="sr-only">Toggle sidebar</span>
     </button>
 
-
     <button type="button" class="md-icon-button md-ripple" data-theme-toggle>
       <span class="material-symbols-rounded" data-theme-icon aria-hidden="true">dark_mode</span>
       <span class="sr-only">Switch theme</span>
     </button>
-
 
     <a href="{{ url_for('auth.profile') }}" class="md-ripple" title="Open profile">
       <span class="sr-only">Profile</span>
@@ -33,7 +31,6 @@
       </div>
     </a>
 
-
     <a href="{{ url_for('auth.logout') }}" class="md-filled-button md-ripple">
       <span class="material-symbols-rounded" aria-hidden="true">logout</span>
       <span>Log out</span>
@@ -42,7 +39,7 @@
 </header>
 
 
-<nav id="primary-navigation" class="md-drawer">
+<nav id="primary-navigation" class="md-drawer desktop-only">
   <ul class="md-drawer__list">
     <li><a class="md-ripple" href="{{ url_for('chat.inbox') }}">
       <span class="material-symbols-rounded" aria-hidden="true">inbox</span>

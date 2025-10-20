@@ -65,6 +65,12 @@ body[data-theme='dark'] {
     --md-sys-state-layer: rgba(208, 188, 255, 0.12);
 }
 
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
     :root {
         --md-sys-color-primary: #d0bcff;

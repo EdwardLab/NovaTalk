@@ -1,3 +1,6 @@
+"""warning!!!!! THIS SERVER IS FOR DEVELOPMENT ONLY. DO NOT USE IT IN A PRODUCTION DEPLOYMENT. USE A PRODUCTION WSGI SERVER INSTEAD."""
+"""development server"""
+
 from app import create_app, socketio
 
 app = create_app()
