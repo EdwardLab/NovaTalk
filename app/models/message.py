@@ -4,6 +4,7 @@ from markupsafe import Markup
 from sqlalchemy.orm import validates
 
 from app import db
+from app.utils.datetime import to_utc_iso
 
 
 class Message(db.Model):
@@ -31,7 +32,7 @@ class Message(db.Model):
             "chat_id": self.chat_id,
             "sender_id": self.sender_id,
             "body": self.body,
-            "created_at": self.created_at.isoformat(),
+            "created_at": to_utc_iso(self.created_at),
             "attachments": [attachment.to_dict() for attachment in self.attachments],
         }
 

@@ -7,6 +7,17 @@ from sqlalchemy.orm import reconstructor, validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import db
+from app.utils.datetime import to_utc_iso
+
+
+DEFAULT_TIMEZONE_MODE = "system"
+DEFAULT_TIMEZONE_OFFSET = 0
+DEFAULT_DATETIME_FORMAT = "MM/DD/YYYY HH:mm"
+ALLOWED_DATETIME_FORMATS = (
+    "MM/DD/YYYY HH:mm",
+    "DD/MM/YYYY HH:mm",
+    "YYYY-MM-DD HH:mm",
+)
 
 
 class Avatar(db.Model):
@@ -33,6 +44,9 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     online = db.Column(db.Boolean, default=False)
+    timezone_mode = db.Column(db.String(20), default=DEFAULT_TIMEZONE_MODE, nullable=False)
+    timezone_offset = db.Column(db.Integer, default=DEFAULT_TIMEZONE_OFFSET, nullable=False)
+    datetime_format = db.Column(db.String(32), default=DEFAULT_DATETIME_FORMAT, nullable=False)
 
     avatar = db.relationship("Avatar", backref=db.backref("user", uselist=False))
 
@@ -51,6 +65,12 @@ class User(UserMixin, db.Model):
             sanitized = self.username.strip().lower().lstrip("@")
             if sanitized != self.username:
                 self.username = sanitized
+        if not self.timezone_mode:
+            self.timezone_mode = DEFAULT_TIMEZONE_MODE
+        if self.timezone_offset is None:
+            self.timezone_offset = DEFAULT_TIMEZONE_OFFSET
+        if not self.datetime_format:
+            self.datetime_format = DEFAULT_DATETIME_FORMAT
 
     @validates("username", "email")
     def _normalize_identity(self, key, value):
@@ -96,7 +116,16 @@ class User(UserMixin, db.Model):
             "avatar": self.avatar_url,
             "bio": self.bio,
             "online": self.online,
-            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+            "last_seen": to_utc_iso(self.last_seen),
+        }
+
+    def settings_payload(self):
+        return {
+            "timezone": {
+                "mode": self.timezone_mode or DEFAULT_TIMEZONE_MODE,
+                "offset": int(self.timezone_offset or 0),
+            },
+            "datetime_format": self.datetime_format or DEFAULT_DATETIME_FORMAT,
         }
 
     def __repr__(self):
