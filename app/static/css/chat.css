@@ -395,6 +395,24 @@ body.dark-mode .contact-result {
     gap: 1rem;
 }
 
+.input-field__choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.input-field__choice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+    color: var(--text-strong);
+}
+
+.input-field__choice input[type="radio"] {
+    accent-color: var(--md-sys-color-primary);
+}
+
 .profile-form__actions {
     display: flex;
     flex-wrap: wrap;
@@ -540,8 +558,18 @@ body.dark-mode .message-divider {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     color: var(--text-subtle);
+    align-self: flex-end;
+    justify-content: flex-end;
+}
+
+.message__timestamp {
+    color: inherit;
+}
+
+.message--outgoing .message__meta {
+    text-align: right;
 }
 
 .message__status[data-message-status='pending']::before {

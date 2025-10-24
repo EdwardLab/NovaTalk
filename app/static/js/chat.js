@@ -12,8 +12,58 @@
         console.error('Failed to parse initial state payload.', error);
     }
 
+    const DEFAULT_DATETIME_FORMAT = 'MM/DD/YYYY HH:mm';
+    const SUPPORTED_DATETIME_FORMATS = [
+        'MM/DD/YYYY HH:mm',
+        'DD/MM/YYYY HH:mm',
+        'YYYY-MM-DD HH:mm',
+    ];
+    const MIN_TIMEZONE_OFFSET = -12 * 60;
+    const MAX_TIMEZONE_OFFSET = 14 * 60;
+    const TIMEZONE_STEP = 30;
+    const TIMEZONE_OPTIONS = [];
+
+    const formatOffsetLabel = (minutes) => {
+        const sign = minutes >= 0 ? '+' : '-';
+        const absolute = Math.abs(minutes);
+        const hours = String(Math.floor(absolute / 60)).padStart(2, '0');
+        const mins = String(absolute % 60).padStart(2, '0');
+        const suffix = `${sign}${hours}:${mins}`;
+        return minutes === 0 ? 'UTC (GMT+00:00)' : `GMT${suffix}`;
+    };
+
+    for (let minutes = MIN_TIMEZONE_OFFSET; minutes <= MAX_TIMEZONE_OFFSET; minutes += TIMEZONE_STEP) {
+        TIMEZONE_OPTIONS.push({ value: minutes, label: formatOffsetLabel(minutes) });
+    }
+
+    const normalizeSettings = (settings) => {
+        const rawTimezone = settings?.timezone || {};
+        const mode = rawTimezone.mode === 'custom' ? 'custom' : 'system';
+        let offset = Number(rawTimezone.offset);
+        if (!Number.isFinite(offset)) {
+            offset = 0;
+        }
+        offset = Math.round(offset);
+        offset = Math.round(offset / TIMEZONE_STEP) * TIMEZONE_STEP;
+        offset = Math.max(MIN_TIMEZONE_OFFSET, Math.min(MAX_TIMEZONE_OFFSET, offset));
+        const format =
+            typeof settings?.datetime_format === 'string' &&
+            SUPPORTED_DATETIME_FORMATS.includes(settings.datetime_format)
+                ? settings.datetime_format
+                : DEFAULT_DATETIME_FORMAT;
+        return {
+            timezone: { mode, offset },
+            datetime_format: format,
+        };
+    };
+
+    const normalizedUser = {
+        ...(bootState.user || {}),
+        settings: normalizeSettings(bootState.user?.settings),
+    };
+
     const state = {
-        user: bootState.user || {},
+        user: normalizedUser,
         chats: Array.isArray(bootState.chats) ? bootState.chats : [],
         contacts: bootState.contacts || { friends: [], incoming: [], outgoing: [] },
         ui: {
@@ -23,6 +73,26 @@
             pendingGroupInvites: bootState.ui?.pendingGroupInvites || 0,
         },
     };
+
+    let activeDateSettings = normalizedUser.settings;
+
+    const syncActiveSettings = () => {
+        activeDateSettings = normalizeSettings(state.user?.settings);
+        if (state.user) {
+            state.user.settings = activeDateSettings;
+        }
+        return activeDateSettings;
+    };
+
+    const assignUser = (payload) => {
+        state.user = {
+            ...(payload || {}),
+            settings: normalizeSettings(payload?.settings),
+        };
+        syncActiveSettings();
+    };
+
+    assignUser(state.user);
 
     if (!state.contacts.group_invites) {
         state.contacts.group_invites = { incoming: [], outgoing: [] };
@@ -79,8 +149,27 @@
         profileBioCount: root.querySelector('[data-profile-bio-count]'),
         profileEmail: root.querySelector('[data-profile-email]'),
         profileSave: root.querySelector('[data-profile-save]'),
+        profileDatetimeFormat: root.querySelector('[data-profile-datetime-format]'),
+        profileTimezoneModes: Array.from(root.querySelectorAll('[data-profile-timezone-mode]')),
+        profileTimezoneOffset: root.querySelector('[data-profile-timezone-offset]'),
         groupInviteButton: root.querySelector('[data-group-invite]'),
     };
+
+    const populateTimezoneOptions = () => {
+        const select = elements.profileTimezoneOffset;
+        if (!select) {
+            return;
+        }
+        select.innerHTML = '';
+        TIMEZONE_OPTIONS.forEach((option) => {
+            const node = document.createElement('option');
+            node.value = String(option.value);
+            node.textContent = option.label;
+            select.appendChild(node);
+        });
+    };
+
+    populateTimezoneOptions();
 
     const messageStore = new Map();
     const pendingAttachments = [];
@@ -118,34 +207,123 @@
         });
     };
 
-    const formatTime = (value) => {
-        if (!value) {
-            return '';
+    const appendUtcSuffix = (value) => {
+        if (typeof value !== 'string') {
+            return value;
         }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-            return '';
+        if (value.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(value)) {
+            return value;
         }
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return `${value}Z`;
     };
 
-    const formatRelativeDate = (value) => {
+    const parseISODate = (value) => {
         if (!value) {
+            return null;
+        }
+        const source = value instanceof Date ? value.toISOString() : appendUtcSuffix(String(value));
+        const date = new Date(source);
+        return Number.isNaN(date.getTime()) ? null : date;
+    };
+
+    const getDisplayDateParts = (date) => {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+            return null;
+        }
+        const settings = activeDateSettings || normalizeSettings();
+        if (settings.timezone?.mode === 'custom') {
+            const offset = Number(settings.timezone?.offset) || 0;
+            const adjusted = new Date(date.getTime() + offset * 60000);
+            return {
+                year: adjusted.getUTCFullYear(),
+                month: adjusted.getUTCMonth() + 1,
+                day: adjusted.getUTCDate(),
+                hours: adjusted.getUTCHours(),
+                minutes: adjusted.getUTCMinutes(),
+            };
+        }
+        return {
+            year: date.getFullYear(),
+            month: date.getMonth() + 1,
+            day: date.getDate(),
+            hours: date.getHours(),
+            minutes: date.getMinutes(),
+        };
+    };
+
+    const padNumber = (value, length = 2) => String(Math.trunc(value)).padStart(length, '0');
+
+    const formatWithPattern = (parts, pattern) => {
+        if (!parts) {
             return '';
         }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
+        const tokens = {
+            YYYY: padNumber(parts.year, 4),
+            MM: padNumber(parts.month, 2),
+            DD: padNumber(parts.day, 2),
+            HH: padNumber(parts.hours, 2),
+            mm: padNumber(parts.minutes, 2),
+        };
+        return pattern.replace(/YYYY|MM|DD|HH|mm/g, (token) => tokens[token] || token);
+    };
+
+    const getDatePattern = () => {
+        const format = activeDateSettings?.datetime_format || DEFAULT_DATETIME_FORMAT;
+        return format.split(' ')[0] || DEFAULT_DATETIME_FORMAT.split(' ')[0];
+    };
+
+    const getTimePattern = () => {
+        const format = activeDateSettings?.datetime_format || DEFAULT_DATETIME_FORMAT;
+        const segments = format.split(' ');
+        return segments[1] || 'HH:mm';
+    };
+
+    const formatTimestamp = (value) => {
+        const date = value instanceof Date ? value : parseISODate(value);
+        if (!date) {
             return '';
         }
-        const today = new Date();
-        const sameDay =
-            date.getFullYear() === today.getFullYear() &&
-            date.getMonth() === today.getMonth() &&
-            date.getDate() === today.getDate();
-        if (sameDay) {
-            return formatTime(value);
+        const parts = getDisplayDateParts(date);
+        return formatWithPattern(parts, activeDateSettings?.datetime_format || DEFAULT_DATETIME_FORMAT);
+    };
+
+    const formatDateOnly = (value) => {
+        const date = value instanceof Date ? value : parseISODate(value);
+        if (!date) {
+            return '';
         }
-        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        const parts = getDisplayDateParts(date);
+        return formatWithPattern(parts, getDatePattern());
+    };
+
+    const formatTimeOfDay = (value) => {
+        const date = value instanceof Date ? value : parseISODate(value);
+        if (!date) {
+            return '';
+        }
+        const parts = getDisplayDateParts(date);
+        return formatWithPattern(parts, getTimePattern());
+    };
+
+    const formatTime = (value) => formatTimeOfDay(value);
+
+    const formatRelativeDate = (value) => {
+        const date = value instanceof Date ? value : parseISODate(value);
+        if (!date) {
+            return '';
+        }
+        const diff = Date.now() - date.getTime();
+        if (diff < 60 * 1000) {
+            return 'Just now';
+        }
+        if (diff < 60 * 60 * 1000) {
+            const minutes = Math.max(1, Math.round(diff / (60 * 1000)));
+            return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+        }
+        if (diff < 24 * 60 * 60 * 1000) {
+            return formatTimeOfDay(date);
+        }
+        return formatDateOnly(date);
     };
 
     const ensureArray = (value) => (Array.isArray(value) ? value : []);
@@ -253,6 +431,7 @@
     };
 
     const renderProfile = () => {
+        syncActiveSettings();
         if (elements.profileName) {
             elements.profileName.textContent = state.user.display_name || 'Guest';
         }
@@ -273,6 +452,7 @@
     };
 
     const renderProfileForm = () => {
+        const settings = syncActiveSettings();
         if (elements.profileDisplayName) {
             elements.profileDisplayName.value = state.user.display_name || '';
         }
@@ -281,6 +461,30 @@
             if (elements.profileBioCount) {
                 elements.profileBioCount.textContent = String(elements.profileBio.value.length);
             }
+        }
+        if (elements.profileEmail) {
+            elements.profileEmail.value = state.user.email || '';
+        }
+        if (elements.profileDatetimeFormat) {
+            elements.profileDatetimeFormat.value = settings.datetime_format;
+        }
+        if (elements.profileTimezoneModes && elements.profileTimezoneModes.length) {
+            elements.profileTimezoneModes.forEach((input) => {
+                input.checked = input.value === settings.timezone.mode;
+            });
+        }
+        if (elements.profileTimezoneOffset) {
+            const hasOption = Array.from(elements.profileTimezoneOffset.options || []).some(
+                (option) => Number(option.value) === Number(settings.timezone.offset)
+            );
+            if (!hasOption) {
+                const option = document.createElement('option');
+                option.value = String(settings.timezone.offset);
+                option.textContent = formatOffsetLabel(settings.timezone.offset);
+                elements.profileTimezoneOffset.appendChild(option);
+            }
+            elements.profileTimezoneOffset.value = String(settings.timezone.offset);
+            elements.profileTimezoneOffset.disabled = settings.timezone.mode !== 'custom';
         }
     };
 
@@ -573,8 +777,15 @@
     };
 
     const dayKey = (value) => {
-        const date = new Date(value);
-        return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+        const date = value instanceof Date ? value : parseISODate(value);
+        if (!date) {
+            return '';
+        }
+        const parts = getDisplayDateParts(date);
+        if (!parts) {
+            return '';
+        }
+        return `${padNumber(parts.year, 4)}-${padNumber(parts.month, 2)}-${padNumber(parts.day, 2)}`;
     };
 
     const buildMessageElement = (message) => {
@@ -616,11 +827,11 @@
         }
         const meta = document.createElement('div');
         meta.className = 'message__meta';
-        const time = document.createElement('time');
-        time.className = 'message__time';
-        time.dateTime = message.created_at;
-        time.textContent = formatTime(message.created_at);
-        meta.appendChild(time);
+        const timestamp = document.createElement('time');
+        timestamp.className = 'message__timestamp';
+        timestamp.dateTime = message.created_at || '';
+        timestamp.textContent = formatTimestamp(message.created_at);
+        meta.appendChild(timestamp);
         if (isOutgoing) {
             const status = document.createElement('span');
             status.className = 'message__status';
@@ -660,7 +871,13 @@
             return;
         }
 
-        const sorted = ensureArray(messages).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const sorted = ensureArray(messages)
+            .slice()
+            .sort((a, b) => {
+                const aDate = parseISODate(a?.created_at);
+                const bDate = parseISODate(b?.created_at);
+                return (aDate ? aDate.getTime() : 0) - (bDate ? bDate.getTime() : 0);
+            });
         messageFeed.innerHTML = '';
         let lastDay = null;
 
@@ -671,11 +888,7 @@
                 lastDay = messageDay;
                 const divider = document.createElement('div');
                 divider.className = 'message-divider';
-                divider.textContent = new Date(message.created_at).toLocaleDateString([], {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                });
+                divider.textContent = formatDateOnly(message.created_at) || 'Unknown date';
                 messageFeed.appendChild(divider);
             }
             const node = buildMessageElement(message);
@@ -1099,7 +1312,7 @@
             return;
         }
         if (incomingState.user) {
-            state.user = incomingState.user;
+            assignUser(incomingState.user);
         }
         if (Array.isArray(incomingState.chats)) {
             state.chats = incomingState.chats;
@@ -1279,7 +1492,7 @@
     const handleProfileUpdate = (payload) => {
         console.log('socket event: profile:update', payload);
         if (payload?.user) {
-            state.user = payload.user;
+            assignUser(payload.user);
             renderProfile();
             renderProfileForm();
             if (payload.user.avatar) {
@@ -1732,6 +1945,14 @@
                 const payload = {
                     display_name: elements.profileDisplayName?.value || '',
                     bio: elements.profileBio?.value || '',
+                    datetime_format:
+                        elements.profileDatetimeFormat?.value &&
+                        SUPPORTED_DATETIME_FORMATS.includes(elements.profileDatetimeFormat.value)
+                            ? elements.profileDatetimeFormat.value
+                            : DEFAULT_DATETIME_FORMAT,
+                    timezone_mode:
+                        elements.profileTimezoneModes?.find((input) => input.checked)?.value || 'system',
+                    timezone_offset: Number(elements.profileTimezoneOffset?.value || 0),
                 };
                 emitSocket('me:update', payload, (response) => {
                     if (!response?.ok) {
@@ -1739,11 +1960,19 @@
                         return;
                     }
                     if (response.user) {
-                        state.user = response.user;
+                        assignUser(response.user);
                         renderProfile();
                         renderProfileForm();
                         showToast('Profile updated.', 'success');
                     }
+                });
+            });
+        }
+        if (elements.profileTimezoneModes && elements.profileTimezoneModes.length && elements.profileTimezoneOffset) {
+            elements.profileTimezoneModes.forEach((input) => {
+                input.addEventListener('change', () => {
+                    const selected = elements.profileTimezoneModes.find((node) => node.checked);
+                    elements.profileTimezoneOffset.disabled = (selected?.value || 'system') !== 'custom';
                 });
             });
         }

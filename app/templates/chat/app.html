@@ -166,6 +166,32 @@
                             <label for="profile-email">Email</label>
                             <input id="profile-email" type="email" class="input-field__control" data-profile-email disabled>
                         </div>
+                        <div class="input-field">
+                            <label for="profile-datetime-format">Timestamp format</label>
+                            <select id="profile-datetime-format" class="input-field__control" data-profile-datetime-format>
+                                <option value="MM/DD/YYYY HH:mm">MM/DD/YYYY HH:mm</option>
+                                <option value="DD/MM/YYYY HH:mm">DD/MM/YYYY HH:mm</option>
+                                <option value="YYYY-MM-DD HH:mm">YYYY-MM-DD HH:mm</option>
+                            </select>
+                        </div>
+                        <div class="input-field">
+                            <label for="profile-timezone-system">Timezone display</label>
+                            <div class="input-field__choices">
+                                <label class="input-field__choice" for="profile-timezone-system">
+                                    <input id="profile-timezone-system" type="radio" name="profile-timezone-mode" value="system" data-profile-timezone-mode checked>
+                                    <span>Use my device timezone</span>
+                                </label>
+                                <label class="input-field__choice" for="profile-timezone-custom">
+                                    <input id="profile-timezone-custom" type="radio" name="profile-timezone-mode" value="custom" data-profile-timezone-mode>
+                                    <span>Use a custom offset</span>
+                                </label>
+                            </div>
+                            <label class="sr-only" for="profile-timezone-offset">Timezone offset</label>
+                            <select id="profile-timezone-offset" class="input-field__control" data-profile-timezone-offset disabled>
+                                <option value="0">UTC (GMT+00:00)</option>
+                            </select>
+                            <p class="helper-text">Times are saved in UTC and shown using your preference.</p>
+                        </div>
                         <div class="profile-form__actions">
                             <button type="submit" class="md-filled-button md-ripple" data-profile-save>Save changes</button>
                             <a class="md-text-button md-ripple" href="{{ url_for('auth.profile') }}">Open full profile</a>

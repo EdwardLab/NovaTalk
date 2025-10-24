@@ -25,7 +25,19 @@ from app.models import (
     MessageAttachment,
     User,
 )
+from app.models.user import (
+    ALLOWED_DATETIME_FORMATS,
+    DEFAULT_DATETIME_FORMAT,
+    DEFAULT_TIMEZONE_MODE,
+    DEFAULT_TIMEZONE_OFFSET,
+)
+from app.utils.datetime import to_utc_iso
 from app.utils.storage import remove_file, save_avatar, save_message_image
+
+VALID_TIMEZONE_MODES = {"system", "custom"}
+MIN_TIMEZONE_OFFSET = -12 * 60
+MAX_TIMEZONE_OFFSET = 14 * 60
+TIMEZONE_STEP = 30
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -44,7 +56,7 @@ def _serialize_member(member: ChatMember) -> Dict[str, Any]:
         "id": member.id,
         "user": member.user.to_public_dict(),
         "is_admin": member.is_admin,
-        "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+        "joined_at": to_utc_iso(member.joined_at),
     }
 
 
@@ -65,16 +77,14 @@ def _serialize_chat_summary(chat: Chat, user: User) -> Dict[str, Any]:
     members = list(chat.members.order_by(ChatMember.joined_at.asc()))
     partner = _chat_partner(members, user.id) if not chat.is_group else None
     latest_message = chat.messages.order_by(Message.created_at.desc()).first()
-    last_timestamp = (
-        latest_message.created_at.isoformat() if latest_message else chat.created_at.isoformat()
-    )
+    last_timestamp = to_utc_iso(latest_message.created_at if latest_message else chat.created_at)
     return {
         "id": chat.id,
         "is_group": chat.is_group,
         "name": chat.name
         if chat.is_group and chat.name
         else (partner.display_name if partner else "Conversation"),
-        "created_at": chat.created_at.isoformat() if chat.created_at else None,
+        "created_at": to_utc_iso(chat.created_at),
         "updated_at": last_timestamp,
         "members": [_serialize_member(member) for member in members],
         "partner": partner.to_public_dict() if partner else None,
@@ -100,7 +110,7 @@ def _serialize_group_invite(invite: GroupInvite) -> Dict[str, Any]:
         "chat_name": group.name if group else None,
         "group_id": group.id if group else invite.chat_id,
         "group_name": group.name if group else None,
-        "created_at": invite.created_at.isoformat() if invite.created_at else None,
+        "created_at": to_utc_iso(invite.created_at),
         "status": invite.status,
         "inviter": invite.inviter.to_public_dict() if invite.inviter else None,
         "invitee": invite.invitee.to_public_dict() if invite.invitee else None,
@@ -112,7 +122,7 @@ def _collect_contacts(user: User) -> Dict[str, Any]:
         {
             "id": relation.id,
             "user": relation.friend.to_public_dict(),
-            "since": relation.created_at.isoformat() if relation.created_at else None,
+            "since": to_utc_iso(relation.created_at),
         }
         for relation in user.friends
     ]
@@ -120,7 +130,7 @@ def _collect_contacts(user: User) -> Dict[str, Any]:
         {
             "id": request_obj.id,
             "user": request_obj.sender.to_public_dict(),
-            "created_at": request_obj.created_at.isoformat() if request_obj.created_at else None,
+            "created_at": to_utc_iso(request_obj.created_at),
             "status": request_obj.status,
         }
         for request_obj in user.received_friend_requests
@@ -130,7 +140,7 @@ def _collect_contacts(user: User) -> Dict[str, Any]:
         {
             "id": request_obj.id,
             "user": request_obj.receiver.to_public_dict(),
-            "created_at": request_obj.created_at.isoformat() if request_obj.created_at else None,
+            "created_at": to_utc_iso(request_obj.created_at),
             "status": request_obj.status,
         }
         for request_obj in user.sent_friend_requests
@@ -198,6 +208,8 @@ def _resolve_invitees(*values: Any) -> List[User]:
             identifiers.extend(filter(None, parts))
         elif isinstance(value, (list, tuple, set)):
             identifiers.extend(value)
+        elif isinstance(value, dict):
+            identifiers.extend(value.values())
         else:
             identifiers.append(value)
     resolved: List[User] = []
@@ -208,6 +220,35 @@ def _resolve_invitees(*values: Any) -> List[User]:
             seen_ids.add(user.id)
             resolved.append(user)
     return resolved
+
+
+def _sanitize_timezone_mode(value: Any) -> str:
+    if value is None:
+        return DEFAULT_TIMEZONE_MODE
+    mode = str(value).strip().lower()
+    if mode not in VALID_TIMEZONE_MODES:
+        return DEFAULT_TIMEZONE_MODE
+    return mode
+
+
+def _sanitize_timezone_offset(value: Any) -> int:
+    if value is None:
+        minutes = DEFAULT_TIMEZONE_OFFSET
+    else:
+        try:
+            minutes = int(round(float(value)))
+        except (TypeError, ValueError):
+            minutes = DEFAULT_TIMEZONE_OFFSET
+    minutes = int(round(minutes / TIMEZONE_STEP) * TIMEZONE_STEP)
+    minutes = max(MIN_TIMEZONE_OFFSET, min(MAX_TIMEZONE_OFFSET, minutes))
+    return minutes
+
+
+def _sanitize_datetime_format(value: Any) -> str:
+    if value is None:
+        return DEFAULT_DATETIME_FORMAT
+    text = str(value).strip()
+    return text if text in ALLOWED_DATETIME_FORMATS else DEFAULT_DATETIME_FORMAT
 
 
 def _initial_state_for_user(
@@ -236,6 +277,7 @@ def _initial_state_for_user(
         "user": {
             **user.to_public_dict(),
             "email": user.email,
+            "settings": user.settings_payload(),
         },
         "chats": serialized_chats,
         "contacts": contacts,
@@ -929,10 +971,16 @@ def handle_me_update(data):
     display_name = (data.get("display_name") or "").strip()
     bio = (data.get("bio") or "").strip()
     avatar_payload = data.get("avatar")
+    timezone_mode = _sanitize_timezone_mode(data.get("timezone_mode"))
+    timezone_offset = _sanitize_timezone_offset(data.get("timezone_offset"))
+    datetime_format = _sanitize_datetime_format(data.get("datetime_format"))
     if not display_name:
         return {"ok": False, "error": "Display name is required."}
     current_user.display_name = display_name
     current_user.bio = bio
+    current_user.timezone_mode = timezone_mode
+    current_user.timezone_offset = timezone_offset
+    current_user.datetime_format = datetime_format
 
     if avatar_payload:
         if avatar_payload.get("remove"):
@@ -967,5 +1015,6 @@ def handle_me_update(data):
         return {"ok": False, "error": "Failed to update profile."}
     user_payload = current_user.to_public_dict()
     user_payload["email"] = current_user.email
+    user_payload["settings"] = current_user.settings_payload()
     socketio.emit("profile:update", {"user": user_payload}, room=f"user_{current_user.id}")
     return {"ok": True, "user": user_payload}
