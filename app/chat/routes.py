@@ -589,15 +589,19 @@ def handle_send_message(data):
 def handle_message_edit(data):
     if not current_user.is_authenticated:
         return {"ok": False, "error": "Unauthorized"}
+
     message_id = data.get("message_id") or data.get("id")
     new_body = (data.get("body") or "").strip()
+
     if not message_id:
         return {"ok": False, "error": "Message ID required"}
     if not new_body:
         return {"ok": False, "error": "Message cannot be empty."}
+
     message = Message.query.get(message_id)
     if not message:
         return {"ok": False, "error": "Message not found"}
+
     chat = message.chat
     if not chat or not chat.has_member(current_user.id):
         return {"ok": False, "error": "Chat not found"}
@@ -606,15 +610,25 @@ def handle_message_edit(data):
     if not _can_manage_message(message, current_user):
         return {"ok": False, "error": "You do not have permission to edit this message."}
 
+    # --- perform edit ---
     message.body = new_body
     message.last_edited_at = datetime.utcnow()
     message.edited = True
+
+    from sqlalchemy.exc import SQLAlchemyError
+
     try:
         db.session.commit()
-    except Exception:
+    except SQLAlchemyError as e:
         db.session.rollback()
-        current_app.logger.exception("Failed to edit message.")
-        return {"ok": False, "error": "Failed to edit message."}
+        current_app.logger.exception("Database commit failed during message edit")
+        return {"ok": False, "error": f"Database error: {e}"}
+    except Exception as e:
+        # non-DB errors (socket serialization, etc.) shouldn’t block a success
+        current_app.logger.warning(f"Non-critical error after commit: {e}")
+        payload = _serialize_message(message)
+        socketio.emit("message:updated", payload, room=f"chat_{message.chat_id}")
+        return {"ok": True, "message": payload}
 
     payload = _serialize_message(message)
     socketio.emit("message:updated", payload, room=f"chat_{message.chat_id}")
