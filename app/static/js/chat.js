@@ -71,6 +71,7 @@
             activeTab: bootState.ui?.activeTab || 'chats',
             pendingCount: bootState.ui?.pendingCount || 0,
             pendingGroupInvites: bootState.ui?.pendingGroupInvites || 0,
+            editingMessage: null,
         },
     };
 
@@ -328,9 +329,59 @@
 
     const ensureArray = (value) => (Array.isArray(value) ? value : []);
 
+    const getChatById = (chatId) => {
+        if (!chatId) {
+            return undefined;
+        }
+        return ensureArray(state.chats).find((chat) => String(chat.id) === String(chatId));
+    };
+
+    const isChatAdmin = (chatId) => {
+        const chat = getChatById(chatId);
+        const members = ensureArray(chat?.members);
+        return members.some((member) => {
+            const userId = Number(member?.user?.id || member?.user_id);
+            return userId === Number(state.user.id) && Boolean(member?.is_admin);
+        });
+    };
+
+    const canManageMessage = (message) => {
+        if (!message) {
+            return false;
+        }
+        const senderId = Number(message.sender?.id || message.sender_id);
+        if (senderId === Number(state.user.id)) {
+            return true;
+        }
+        return isChatAdmin(message.chat_id);
+    };
+
+    const isPersistedMessage = (message) => {
+        if (!message || message.id === undefined || message.id === null) {
+            return false;
+        }
+        return /^\d+$/.test(String(message.id));
+    };
+
+    const decorateMessage = (message) => {
+        if (!message) {
+            return message;
+        }
+        const next = { ...message };
+        const senderId = Number(next.sender?.id || next.sender_id);
+        if (senderId === Number(state.user.id)) {
+            next.status = next.status || 'delivered';
+            next.statusLabel = next.statusLabel || 'Delivered';
+        }
+        return next;
+    };
+
     const getMessagePreview = (message) => {
         if (!message) {
             return '';
+        }
+        if (message.is_deleted) {
+            return 'Message deleted';
         }
         const body = typeof message.body === 'string' ? message.body.trim() : '';
         if (body) {
@@ -790,12 +841,21 @@
 
     const buildMessageElement = (message) => {
         const isOutgoing = Number(message.sender?.id || message.sender_id) === Number(state.user.id);
+        const isDeleted = Boolean(message.is_deleted);
+        const isEditing = Boolean(state.ui.editingMessage) &&
+            String(state.ui.editingMessage.id) === String(message.id);
+        const persisted = isPersistedMessage(message);
+        const canEdit = !isDeleted && persisted && canManageMessage(message);
+        const canDelete = persisted && canManageMessage(message);
         const wrapper = document.createElement('article');
         wrapper.className = 'message';
         wrapper.dataset.messageId = message.id;
         wrapper.dataset.chatId = message.chat_id;
         if (isOutgoing) {
             wrapper.classList.add('message--outgoing');
+        }
+        if (isDeleted) {
+            wrapper.classList.add('message--deleted');
         }
         if (message.status === 'error') {
             wrapper.classList.add('message--error');
@@ -805,11 +865,49 @@
         if (message.status === 'error') {
             bubble.classList.add('is-error');
         }
-        const text = document.createElement('p');
-        text.className = 'message__text';
-        text.textContent = message.body || '';
-        bubble.appendChild(text);
-        if (ensureArray(message.attachments).length) {
+
+        if (isEditing) {
+            const draft =
+                state.ui.editingMessage?.draft !== undefined
+                    ? state.ui.editingMessage.draft
+                    : message.body || '';
+            const textarea = document.createElement('textarea');
+            textarea.className = 'message__edit-input';
+            textarea.dataset.messageEditInput = 'true';
+            textarea.value = draft;
+            textarea.rows = Math.min(6, Math.max(3, draft.split('\n').length + 1));
+            bubble.appendChild(textarea);
+            setTimeout(() => {
+                if (!textarea.isConnected) {
+                    return;
+                }
+                textarea.focus();
+                const length = textarea.value.length;
+                try {
+                    textarea.setSelectionRange(length, length);
+                } catch (error) {
+                    // ignore selection issues
+                }
+            }, 0);
+        } else {
+            const text = document.createElement('p');
+            text.className = 'message__text';
+            if (isDeleted) {
+                text.classList.add('message__text--deleted');
+                text.textContent = 'This message has been deleted.';
+            } else {
+                text.textContent = message.body || '';
+                if (message.edited) {
+                    const editedTag = document.createElement('span');
+                    editedTag.className = 'message__edited-tag';
+                    editedTag.textContent = ' (edited)';
+                    text.appendChild(editedTag);
+                }
+            }
+            bubble.appendChild(text);
+        }
+
+        if (!isDeleted && ensureArray(message.attachments).length) {
             const attachments = document.createElement('div');
             attachments.className = 'message__attachments';
             message.attachments.forEach((attachment) => {
@@ -825,6 +923,7 @@
             });
             bubble.appendChild(attachments);
         }
+
         const meta = document.createElement('div');
         meta.className = 'message__meta';
         const timestamp = document.createElement('time');
@@ -839,8 +938,55 @@
             status.textContent = message.statusLabel || 'Sending…';
             meta.appendChild(status);
         }
+
         wrapper.appendChild(bubble);
         wrapper.appendChild(meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'message__actions';
+        if (isEditing) {
+            const save = document.createElement('button');
+            save.type = 'button';
+            save.className = 'message__action';
+            save.dataset.messageAction = 'save-edit';
+            save.dataset.messageId = message.id;
+            save.dataset.chatId = message.chat_id;
+            save.textContent = 'Save';
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'message__action message__action--tonal';
+            cancel.dataset.messageAction = 'cancel-edit';
+            cancel.dataset.messageId = message.id;
+            cancel.dataset.chatId = message.chat_id;
+            cancel.textContent = 'Cancel';
+            actions.appendChild(save);
+            actions.appendChild(cancel);
+        } else {
+            if (canEdit) {
+                const editButton = document.createElement('button');
+                editButton.type = 'button';
+                editButton.className = 'message__action';
+                editButton.dataset.messageAction = 'edit';
+                editButton.dataset.messageId = message.id;
+                editButton.dataset.chatId = message.chat_id;
+                editButton.textContent = 'Edit';
+                actions.appendChild(editButton);
+            }
+            if (canDelete && !isDeleted) {
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'message__action message__action--danger';
+                deleteButton.dataset.messageAction = 'delete';
+                deleteButton.dataset.messageId = message.id;
+                deleteButton.dataset.chatId = message.chat_id;
+                deleteButton.textContent = 'Delete';
+                actions.appendChild(deleteButton);
+            }
+        }
+        if (actions.childElementCount > 0) {
+            wrapper.appendChild(actions);
+        }
+
         return wrapper;
     };
 
@@ -902,7 +1048,6 @@
 
         refreshViewer();
 
-        // === 强制滚动函数 ===
         const forceScroll = () => {
             requestAnimationFrame(() => {
                 messageFeed.scrollTop = messageFeed.scrollHeight;
@@ -910,10 +1055,8 @@
             });
         };
 
-        // === MutationObserver 自动保持在底部 ===
         if (!messageFeed._observerBound) {
             const observer = new MutationObserver(() => {
-                // 每当 DOM 变化时自动滚动到底
                 forceScroll();
             });
             observer.observe(messageFeed, { childList: true, subtree: true });
@@ -921,10 +1064,8 @@
             console.log('👁️ Bound MutationObserver for messageFeed');
         }
 
-        // === 延迟滚动以等待渲染完成 ===
         setTimeout(forceScroll, 150);
-
-        // === 图片加载后再次滚动 ===
+        
         messageFeed.querySelectorAll('img').forEach((img) => {
             if (!img.dataset.scrollListener) {
                 img.dataset.scrollListener = 'true';
@@ -937,17 +1078,171 @@
     };
 
 
+    const getEditingContext = () => state.ui.editingMessage;
 
-    const appendMessage = (message) => {
+    const beginEditMessage = (chatId, messageId) => {
+        const messages = getMessagesForChat(chatId);
+        const target = messages.find((item) => String(item.id) === String(messageId));
+        if (!target || target.is_deleted || !isPersistedMessage(target)) {
+            return;
+        }
+        state.ui.editingMessage = {
+            id: target.id,
+            chatId,
+            draft: target.body || '',
+        };
+        if (String(chatId) === String(state.ui.activeChatId)) {
+            renderMessages(chatId, messages);
+        }
+    };
+
+    const cancelEditingMessage = () => {
+        const context = getEditingContext();
+        if (!context) {
+            return;
+        }
+        const { chatId } = context;
+        state.ui.editingMessage = null;
+        if (chatId && String(chatId) === String(state.ui.activeChatId)) {
+            renderMessages(chatId, getMessagesForChat(chatId));
+        }
+    };
+
+    const updateEditingDraft = (messageId, value) => {
+        if (!state.ui.editingMessage) {
+            return;
+        }
+        if (String(state.ui.editingMessage.id) !== String(messageId)) {
+            return;
+        }
+        state.ui.editingMessage.draft = value;
+    };
+
+    const applyMessageUpdate = (incoming) => {
+        if (!incoming?.chat_id) {
+            return;
+        }
+        const message = decorateMessage(incoming);
         const messages = getMessagesForChat(message.chat_id);
-        const existingIndex = messages.findIndex((item) => item.id === message.id);
-        if (existingIndex >= 0) {
-            messages[existingIndex] = message;
+        const index = messages.findIndex((item) => String(item.id) === String(message.id));
+        if (index >= 0) {
+            messages[index] = { ...messages[index], ...message };
         } else {
             messages.push(message);
         }
+        if (state.ui.editingMessage && String(state.ui.editingMessage.id) === String(message.id)) {
+            state.ui.editingMessage = null;
+        }
         if (String(message.chat_id) === String(state.ui.activeChatId)) {
             renderMessages(message.chat_id, messages);
+        }
+        const chatIndex = state.chats.findIndex((chat) => String(chat.id) === String(message.chat_id));
+        if (chatIndex >= 0) {
+            const chat = state.chats[chatIndex];
+            if (chat.last_message && String(chat.last_message.id) === String(message.id)) {
+                chat.last_message = { ...chat.last_message, ...message };
+                renderChats();
+            }
+        }
+    };
+
+    const submitEditMessage = (chatId, messageId) => {
+        if (!socket) {
+            showToast('You are offline. Please wait for reconnection.', 'error');
+            return;
+        }
+        const feed = getMessageFeed();
+        const node = feed?.querySelector(`[data-message-id="${messageId}"]`);
+        const textarea = node?.querySelector('[data-message-edit-input]');
+        const nextBody = (textarea?.value || '').trim();
+        const messages = getMessagesForChat(chatId);
+        const message = messages.find((item) => String(item.id) === String(messageId));
+        if (!message || !isPersistedMessage(message)) {
+            return;
+        }
+        if (!nextBody) {
+            showToast('Message cannot be empty.', 'error');
+            return;
+        }
+        if ((message.body || '').trim() === nextBody) {
+            cancelEditingMessage();
+            return;
+        }
+    socket.timeout(6000).emit(
+        'message:edit',
+        { message_id: Number(messageId), chat_id: chatId, body: nextBody },
+        (response) => {
+            // Flask-SocketIO 有时不会回调 -> 加 fallback
+            if (!response || typeof response.ok === 'undefined') {
+                console.warn('⚠️ No ACK received, waiting for message:updated event fallback');
+                return;
+            }
+
+            if (!response.ok) {
+                showToast(response.error || 'Failed to edit message.', 'error');
+                return;
+            }
+
+            applyMessageUpdate(response.message);
+        }
+    );
+
+    };
+
+    const requestDeleteMessage = (chatId, messageId) => {
+        if (!socket) {
+            showToast('You are offline. Please wait for reconnection.', 'error');
+            return;
+        }
+
+        const messages = getMessagesForChat(chatId);
+        const message = messages.find((item) => String(item.id) === String(messageId));
+        if (!message || !isPersistedMessage(message)) {
+            return;
+        }
+
+        if (!window.confirm('Delete this message? This cannot be undone.')) {
+            return;
+        }
+
+        socket.timeout(6000).emit(
+            'message:delete',
+            { message_id: Number(messageId), chat_id: chatId },
+            (response) => {
+                if (!response || typeof response.ok === 'undefined') {
+                    console.warn('⚠️ No ACK received for delete, waiting for message:deleted fallback');
+                    return;
+                }
+
+                if (!response.ok) {
+                    showToast(response.error || 'Failed to delete message.', 'error');
+                    return;
+                }
+
+                applyMessageUpdate(response.message);
+            }
+        );
+    };
+
+
+
+
+    const appendMessage = (message) => {
+        const normalized = decorateMessage(message);
+        const messages = getMessagesForChat(normalized.chat_id);
+        let existingIndex = messages.findIndex((item) => String(item.id) === String(normalized.id));
+        if (existingIndex < 0 && normalized.client_ref) {
+            existingIndex = messages.findIndex((item) => item.client_ref === normalized.client_ref);
+        }
+        if (existingIndex >= 0) {
+            const current = messages[existingIndex];
+            normalized.client_ref = normalized.client_ref || current.client_ref;
+            messages[existingIndex] = { ...current, ...normalized };
+        } else {
+            messages.push(normalized);
+        }
+        if (String(normalized.chat_id) === String(state.ui.activeChatId)) {
+            renderMessages(normalized.chat_id, messages);
         }
     };
 
@@ -991,25 +1286,26 @@
         if (!payload) {
             return;
         }
-        const messages = getMessagesForChat(payload.chat_id);
+        const normalized = decorateMessage(payload);
+        normalized.client_ref = normalized.client_ref || tempId;
+        normalized.status = 'delivered';
+        normalized.statusLabel = 'Delivered';
+        const messages = getMessagesForChat(normalized.chat_id);
         const optimisticIndex = messages.findIndex(
             (item) => item.id === tempId || (item.client_ref && item.client_ref === tempId)
         );
-        payload.client_ref = payload.client_ref || tempId;
-        payload.status = 'delivered';
-        payload.statusLabel = 'Delivered';
         if (optimisticIndex >= 0) {
-            messages[optimisticIndex] = { ...messages[optimisticIndex], ...payload };
+            messages[optimisticIndex] = { ...messages[optimisticIndex], ...normalized };
         } else {
-            const existingIndex = messages.findIndex((item) => item.id === payload.id);
+            const existingIndex = messages.findIndex((item) => String(item.id) === String(normalized.id));
             if (existingIndex >= 0) {
-                messages[existingIndex] = { ...messages[existingIndex], ...payload };
+                messages[existingIndex] = { ...messages[existingIndex], ...normalized };
             } else {
-                messages.push(payload);
+                messages.push(normalized);
             }
         }
-        if (String(payload.chat_id) === String(state.ui.activeChatId)) {
-            renderMessages(payload.chat_id, messages);
+        if (String(normalized.chat_id) === String(state.ui.activeChatId)) {
+            renderMessages(normalized.chat_id, messages);
         }
     };
 
@@ -1062,6 +1358,7 @@
             return;
         }
         state.ui.activeChatId = chatId;
+        state.ui.editingMessage = null;
         renderChats();
         clearComposer();
         syncMobileDrawer();
@@ -1174,6 +1471,7 @@
 
     const closeConversation = () => {
         state.ui.activeChatId = null;
+        state.ui.editingMessage = null;
         renderChats();
         if (elements.conversationHeader) {
             elements.conversationHeader.hidden = true;
@@ -1221,6 +1519,8 @@
             created_at: now,
             sender: { id: state.user.id, display_name: state.user.display_name },
             attachments: optimisticAttachments,
+            edited: false,
+            is_deleted: false,
             status: 'pending',
             statusLabel: 'Sending…',
             client_ref: tempId,
@@ -1329,6 +1629,7 @@
         if (incomingState.ui?.pendingGroupInvites !== undefined) {
             state.ui.pendingGroupInvites = incomingState.ui.pendingGroupInvites;
         }
+        state.ui.editingMessage = null;
         renderProfile();
         renderProfileForm();
         renderChats();
@@ -1350,14 +1651,7 @@
         if (!payload.chat_id) {
             return;
         }
-        const decorated = ensureArray(payload.messages).map((message) => {
-            const next = { ...message };
-            if (Number(next.sender?.id || next.sender_id) === Number(state.user.id)) {
-                next.status = 'delivered';
-                next.statusLabel = 'Delivered';
-            }
-            return next;
-        });
+        const decorated = ensureArray(payload.messages).map((message) => decorateMessage(message));
         messageStore.set(payload.chat_id, decorated);
         if (payload.chat) {
             const index = state.chats.findIndex((chat) => chat.id === payload.chat.id);
@@ -1369,6 +1663,7 @@
             renderChats();
         }
         if (String(payload.chat_id) === String(state.ui.activeChatId)) {
+            state.ui.editingMessage = null;
             renderMessages(payload.chat_id, decorated);
         }
     };
@@ -1378,38 +1673,34 @@
         if (!payload?.chat_id) {
             return;
         }
-        const messages = getMessagesForChat(payload.chat_id);
-        const clientRef = payload.client_ref;
-        let index = messages.findIndex((item) => item.id === payload.id);
-        if (clientRef && index < 0) {
-            index = messages.findIndex((item) => item.client_ref === clientRef);
+        const incoming = decorateMessage(payload);
+        if (Number(incoming.sender?.id || incoming.sender_id) !== Number(state.user.id)) {
+            incoming.status = 'received';
         }
-        if (index >= 0) {
-            messages[index] = { ...messages[index], ...payload };
-        } else {
-            messages.push(payload);
-        }
-        if (payload.sender?.id === state.user.id) {
-            payload.status = 'delivered';
-            payload.statusLabel = 'Delivered';
-        } else {
-            payload.status = 'received';
-        }
-        payload.client_ref = payload.client_ref || (index >= 0 ? messages[index]?.client_ref : undefined);
-        appendMessage(payload);
-        if (String(payload.chat_id) === String(state.ui.activeChatId)) {
+        appendMessage(incoming);
+        if (String(incoming.chat_id) === String(state.ui.activeChatId)) {
             scrollToBottom(true);
         }
-        const chatIndex = state.chats.findIndex((chat) => chat.id === payload.chat_id);
+        const chatIndex = state.chats.findIndex((chat) => String(chat.id) === String(incoming.chat_id));
         if (chatIndex >= 0) {
             const chat = state.chats[chatIndex];
-            chat.last_message = payload;
-            chat.updated_at = payload.created_at;
+            chat.last_message = incoming;
+            chat.updated_at = incoming.created_at;
             state.chats.splice(chatIndex, 1);
             state.chats.unshift(chat);
         }
         renderChats();
-        notifyNewMessage(payload);
+        notifyNewMessage(incoming);
+    };
+
+    const handleMessageUpdated = (payload) => {
+        console.log('socket event: message:updated', payload);
+        applyMessageUpdate(payload);
+    };
+
+    const handleMessageDeleted = (payload) => {
+        console.log('socket event: message:deleted', payload);
+        applyMessageUpdate(payload);
     };
 
     const handleContactsUpdate = (payload) => {
@@ -1574,6 +1865,8 @@
         socket.off('profile:update');
         socket.off('chat:typing');
         socket.off('chat:member_update');
+        socket.off('message:updated');
+        socket.off('message:deleted');
 
         socket.on('chat:history', handleChatHistory);
         socket.on('new_message', handleIncomingMessage);
@@ -1581,6 +1874,8 @@
         socket.on('friend:update', handleFriendUpdate);
         socket.on('profile:update', handleProfileUpdate);
         socket.on('chat:member_update', handleChatMemberUpdate);
+        socket.on('message:updated', handleMessageUpdated);
+        socket.on('message:deleted', handleMessageDeleted);
         socket.on('chat:typing', (payload) => {
             console.log('socket event: chat:typing', payload);
         });
@@ -1655,6 +1950,30 @@
             });
         }
         root.addEventListener('click', (event) => {
+            const messageButton = event.target.closest('[data-message-action]');
+            if (messageButton) {
+                event.preventDefault();
+                const action = messageButton.dataset.messageAction;
+                const messageId = messageButton.dataset.messageId;
+                const chatId = Number(messageButton.dataset.chatId);
+                switch (action) {
+                    case 'edit':
+                        beginEditMessage(chatId, messageId);
+                        break;
+                    case 'save-edit':
+                        submitEditMessage(chatId, messageId);
+                        break;
+                    case 'cancel-edit':
+                        cancelEditingMessage();
+                        break;
+                    case 'delete':
+                        requestDeleteMessage(chatId, messageId);
+                        break;
+                    default:
+                        break;
+                }
+                return;
+            }
             const button = event.target.closest('[data-contact-action]');
             if (!button) {
                 return;
@@ -1754,6 +2073,17 @@
                     done();
                     break;
             }
+        });
+        root.addEventListener('input', (event) => {
+            const target = event.target;
+            if (!target.matches('[data-message-edit-input]')) {
+                return;
+            }
+            const wrapper = target.closest('[data-message-id]');
+            if (!wrapper) {
+                return;
+            }
+            updateEditingDraft(wrapper.dataset.messageId, target.value);
         });
         root.addEventListener('click', (event) => {
             const button = event.target.closest('[data-group-invite-action]');

@@ -962,6 +962,9 @@
             if (!message) {
                 return '';
             }
+            if (message.is_deleted) {
+                return 'Message deleted';
+            }
             const body = typeof message.body === 'string' ? message.body.trim() : '';
             if (body) {
                 return body.length > 140 ? `${body.slice(0, 137)}…` : body;
@@ -1102,29 +1105,37 @@
                     const author = document.createElement('span');
                     author.className = 'message__author';
                     author.textContent = message.sender?.display_name || 'Unknown';
-                    const time = document.createElement('time');
-                    time.className = 'message__time';
-                    time.dateTime = message.created_at;
-                    time.textContent = formatTime(message.created_at);
-                    header.appendChild(author);
-                    header.appendChild(time);
-                    const bubble = document.createElement('div');
-                    bubble.className = 'message__bubble';
-                    if (message.body) {
-                        bubble.textContent = message.body;
-                    } else {
-                        bubble.textContent = '';
+                const time = document.createElement('time');
+                time.className = 'message__time';
+                time.dateTime = message.created_at;
+                time.textContent = formatTime(message.created_at);
+                header.appendChild(author);
+                header.appendChild(time);
+                const bubble = document.createElement('div');
+                bubble.className = 'message__bubble';
+                const text = document.createElement('p');
+                text.className = 'message__text';
+                if (message.is_deleted) {
+                    text.classList.add('message__text--deleted');
+                    text.textContent = 'This message has been deleted.';
+                } else {
+                    text.textContent = message.body || '';
+                    if (message.edited) {
+                        const editedTag = document.createElement('span');
+                        editedTag.className = 'message__edited-tag';
+                        editedTag.textContent = ' (edited)';
+                        text.appendChild(editedTag);
                     }
-                    messageEl.appendChild(header);
-                    if (message.body) {
-                        messageEl.appendChild(bubble);
-                    }
-                    if (message.attachments && message.attachments.length) {
-                        const attachments = document.createElement('div');
-                        attachments.className = 'message__attachments';
-                        message.attachments.forEach((attachment) => {
-                            const link = document.createElement('a');
-                            link.className = 'message__attachment';
+                }
+                bubble.appendChild(text);
+                messageEl.appendChild(header);
+                messageEl.appendChild(bubble);
+                if (!message.is_deleted && message.attachments && message.attachments.length) {
+                    const attachments = document.createElement('div');
+                    attachments.className = 'message__attachments';
+                    message.attachments.forEach((attachment) => {
+                        const link = document.createElement('a');
+                        link.className = 'message__attachment';
                             link.href = attachment.url || attachment.download_url || '#';
                             link.addEventListener('click', (event) => event.preventDefault());
                             const img = document.createElement('img');
