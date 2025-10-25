@@ -15,6 +15,9 @@ class Message(db.Model):
     sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     body = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_edited_at = db.Column(db.DateTime, nullable=True)
+    is_deleted = db.Column(db.Boolean, default=False, nullable=False)
+    edited = db.Column(db.Boolean, default=False, nullable=False)
 
     attachments = db.relationship("MessageAttachment", backref="message", cascade="all, delete-orphan")
 
@@ -33,6 +36,9 @@ class Message(db.Model):
             "sender_id": self.sender_id,
             "body": self.body,
             "created_at": to_utc_iso(self.created_at),
+            "last_edited_at": to_utc_iso(self.last_edited_at) if self.last_edited_at else None,
+            "is_deleted": self.is_deleted,
+            "edited": self.edited,
             "attachments": [attachment.to_dict() for attachment in self.attachments],
         }
 

@@ -73,6 +73,18 @@ def _serialize_message(message: Message) -> Dict[str, Any]:
     return payload
 
 
+def _can_manage_message(message: Message, user: User) -> bool:
+    if not message or not user:
+        return False
+    if message.sender_id == user.id:
+        return True
+    chat = message.chat
+    if not chat:
+        return False
+    membership = chat.members.filter_by(user_id=user.id).first()
+    return bool(membership and membership.is_admin)
+
+
 def _serialize_chat_summary(chat: Chat, user: User) -> Dict[str, Any]:
     members = list(chat.members.order_by(ChatMember.joined_at.asc()))
     partner = _chat_partner(members, user.id) if not chat.is_group else None
@@ -570,6 +582,84 @@ def handle_send_message(data):
     if client_ref:
         payload["client_ref"] = client_ref
     socketio.emit("new_message", payload, room=f"chat_{chat.id}")
+    return {"ok": True, "message": payload}
+
+
+@socketio.on("message:edit")
+def handle_message_edit(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    message_id = data.get("message_id") or data.get("id")
+    new_body = (data.get("body") or "").strip()
+    if not message_id:
+        return {"ok": False, "error": "Message ID required"}
+    if not new_body:
+        return {"ok": False, "error": "Message cannot be empty."}
+    message = Message.query.get(message_id)
+    if not message:
+        return {"ok": False, "error": "Message not found"}
+    chat = message.chat
+    if not chat or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Chat not found"}
+    if message.is_deleted:
+        return {"ok": False, "error": "Cannot edit a deleted message."}
+    if not _can_manage_message(message, current_user):
+        return {"ok": False, "error": "You do not have permission to edit this message."}
+
+    message.body = new_body
+    message.last_edited_at = datetime.utcnow()
+    message.edited = True
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to edit message.")
+        return {"ok": False, "error": "Failed to edit message."}
+
+    payload = _serialize_message(message)
+    socketio.emit("message:updated", payload, room=f"chat_{message.chat_id}")
+    return {"ok": True, "message": payload}
+
+
+@socketio.on("message:delete")
+def handle_message_delete(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    message_id = data.get("message_id") or data.get("id")
+    if not message_id:
+        return {"ok": False, "error": "Message ID required"}
+    message = Message.query.get(message_id)
+    if not message:
+        return {"ok": False, "error": "Message not found"}
+    chat = message.chat
+    if not chat or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Chat not found"}
+    if message.is_deleted:
+        return {"ok": True, "message": _serialize_message(message)}
+    if not _can_manage_message(message, current_user):
+        return {"ok": False, "error": "You do not have permission to delete this message."}
+
+    attachments = list(message.attachments)
+    for attachment in attachments:
+        try:
+            if attachment.filename:
+                remove_file("messages", attachment.filename)
+        finally:
+            db.session.delete(attachment)
+
+    message.body = None
+    message.is_deleted = True
+    message.edited = False
+    message.last_edited_at = datetime.utcnow()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete message.")
+        return {"ok": False, "error": "Failed to delete message."}
+
+    payload = _serialize_message(message)
+    socketio.emit("message:deleted", payload, room=f"chat_{message.chat_id}")
     return {"ok": True, "message": payload}
 
 
