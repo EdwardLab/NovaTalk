@@ -1,4 +1,4 @@
-"""(need implemented) This Administrative command line interface for NovaTalk"""
+""" This Administrative command line interface for NovaTalk"""
 
 from __future__ import annotations
 
@@ -53,6 +53,19 @@ def set_password(username: str, password: str):
         db.session.commit()
         click.secho(f"Password updated for '{username}'", fg="green")
 
+@cli.command("delete-user")
+@click.option("--username", required=True, help="Username to delete")
+@click.confirmation_option(prompt="Are you sure you want to delete this user?")
+def delete_user(username: str):
+    """Delete a NovaTalk user."""
+    username = username.strip().lower().lstrip("@")
+    with app.app_context():
+        user = User.query.filter(func.lower(User.username).in_([username, f"@{username}"])).first()
+        if not user:
+            raise click.ClickException(f"User '{username}' was not found")
+        db.session.delete(user)
+        db.session.commit()
+        click.secho(f"User '{username}' has been deleted.", fg="yellow")
 
 if __name__ == "__main__":
     cli()
