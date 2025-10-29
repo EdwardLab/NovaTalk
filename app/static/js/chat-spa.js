@@ -11,6 +11,8 @@
         console.error('Failed to parse initial state payload.', error);
     }
 
+    const SOCKET_IO_CLIENT_SRC = 'https://cdn.socket.io/4.7.4/socket.io.min.js';
+
     const DAY_MS = 24 * 60 * 60 * 1000;
 
     const formatTime = (value) => {
@@ -503,7 +505,7 @@
                 }
                 this.socketLoading = true;
                 const script = document.createElement('script');
-                script.src = '/socket.io/socket.io.js';
+                script.src = SOCKET_IO_CLIENT_SRC;
                 script.async = true;
                 script.setAttribute('data-socket-fallback', 'true');
                 script.onload = () => {

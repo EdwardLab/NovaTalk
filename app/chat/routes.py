@@ -406,7 +406,7 @@ def _emit_chat_history(chat: Chat, user: User) -> None:
 
 
 @socketio.on("initialize")
-def handle_initialize():
+def handle_initialize(_: Optional[Dict[str, Any]] = None):
     if not current_user.is_authenticated:
         return {"ok": False, "error": "Unauthorized"}
     join_room(f"user_{current_user.id}")

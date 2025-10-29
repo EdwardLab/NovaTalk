@@ -17,6 +17,8 @@
     window.NovaTalk = window.NovaTalk || {};
     let socketClientPromise = null;
 
+    const SOCKET_IO_CLIENT_SRC = 'https://cdn.socket.io/4.7.4/socket.io.min.js';
+
     function ensureSocketClient() {
         if (typeof window.io === 'function') {
             return Promise.resolve();
@@ -26,7 +28,7 @@
         }
         socketClientPromise = new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = '/socket.io/socket.io.js';
+            script.src = SOCKET_IO_CLIENT_SRC;
             script.async = true;
             script.onload = () => resolve();
             script.onerror = (error) => {
