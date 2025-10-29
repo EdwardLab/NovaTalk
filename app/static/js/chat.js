@@ -425,15 +425,47 @@
         }
         const toast = document.createElement('div');
         toast.className = `toast toast--${variant}`;
-        toast.textContent = message;
+        toast.setAttribute('role', 'status');
+
+        const text = document.createElement('span');
+        text.className = 'toast__message';
+        text.textContent = message;
+        toast.appendChild(text);
+
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'toast__close';
+        dismiss.setAttribute('aria-label', 'Dismiss notification');
+
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-rounded';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = 'close';
+        dismiss.appendChild(icon);
+
+        toast.appendChild(dismiss);
         elements.toastHost.appendChild(toast);
+
+        let isClosing = false;
+        const removeToast = () => {
+            if (isClosing) {
+                return;
+            }
+            isClosing = true;
+            toast.classList.remove('is-visible');
+            setTimeout(() => toast.remove(), 260);
+        };
+
+        const timer = window.setTimeout(removeToast, 3800);
+
+        dismiss.addEventListener('click', () => {
+            window.clearTimeout(timer);
+            removeToast();
+        });
+
         requestAnimationFrame(() => {
             toast.classList.add('is-visible');
         });
-        setTimeout(() => {
-            toast.classList.remove('is-visible');
-            setTimeout(() => toast.remove(), 260);
-        }, 3800);
     };
 
     const syncMobileDrawer = () => {
@@ -962,47 +994,25 @@
             actions.appendChild(save);
             actions.appendChild(cancel);
         } else {
-            const menuButtons = [];
             if (canEdit) {
                 const editButton = document.createElement('button');
                 editButton.type = 'button';
-                editButton.className = 'message__action-item';
+                editButton.className = 'message__action';
                 editButton.dataset.messageAction = 'edit';
                 editButton.dataset.messageId = message.id;
                 editButton.dataset.chatId = message.chat_id;
                 editButton.textContent = 'Edit';
-                menuButtons.push(editButton);
+                actions.appendChild(editButton);
             }
             if (canDelete && !isDeleted) {
                 const deleteButton = document.createElement('button');
                 deleteButton.type = 'button';
-                deleteButton.className = 'message__action-item message__action-item--danger';
+                deleteButton.className = 'message__action message__action--danger';
                 deleteButton.dataset.messageAction = 'delete';
                 deleteButton.dataset.messageId = message.id;
                 deleteButton.dataset.chatId = message.chat_id;
                 deleteButton.textContent = 'Delete';
-                menuButtons.push(deleteButton);
-            }
-            if (menuButtons.length > 0) {
-                const menuWrapper = document.createElement('div');
-                menuWrapper.className = 'message__action-menu';
-
-                const toggle = document.createElement('button');
-                toggle.type = 'button';
-                toggle.className = 'message__action-toggle';
-                toggle.dataset.messageActionToggle = 'true';
-                toggle.setAttribute('aria-haspopup', 'true');
-                toggle.setAttribute('aria-expanded', 'false');
-                toggle.innerHTML = '<span class="sr-only">Message actions</span><span aria-hidden="true">⋮</span>';
-                menuWrapper.appendChild(toggle);
-
-                const list = document.createElement('div');
-                list.className = 'message__action-list';
-                menuButtons.forEach((button) => {
-                    list.appendChild(button);
-                });
-                menuWrapper.appendChild(list);
-                actions.appendChild(menuWrapper);
+                actions.appendChild(deleteButton);
             }
         }
         if (actions.childElementCount > 0) {
@@ -1971,45 +1981,13 @@
                 });
             });
         }
-        const closeAllMessageMenus = (exception) => {
-            root.querySelectorAll('.message__action-menu.is-open').forEach((menu) => {
-                if (menu === exception) {
-                    return;
-                }
-                menu.classList.remove('is-open');
-                const toggle = menu.querySelector('[data-message-action-toggle]');
-                if (toggle) {
-                    toggle.setAttribute('aria-expanded', 'false');
-                }
-            });
-        };
-
         root.addEventListener('click', (event) => {
-            const toggleButton = event.target.closest('[data-message-action-toggle]');
-            if (toggleButton) {
-                event.preventDefault();
-                const menu = toggleButton.closest('.message__action-menu');
-                if (!menu) {
-                    return;
-                }
-                const isOpen = menu.classList.contains('is-open');
-                closeAllMessageMenus(isOpen ? null : menu);
-                if (isOpen) {
-                    menu.classList.remove('is-open');
-                    toggleButton.setAttribute('aria-expanded', 'false');
-                } else {
-                    menu.classList.add('is-open');
-                    toggleButton.setAttribute('aria-expanded', 'true');
-                }
-                return;
-            }
             const messageButton = event.target.closest('[data-message-action]');
             if (messageButton) {
                 event.preventDefault();
                 const action = messageButton.dataset.messageAction;
                 const messageId = messageButton.dataset.messageId;
                 const chatId = Number(messageButton.dataset.chatId);
-                closeAllMessageMenus();
                 switch (action) {
                     case 'edit':
                         beginEditMessage(chatId, messageId);
@@ -2027,9 +2005,6 @@
                         break;
                 }
                 return;
-            }
-            if (!event.target.closest('.message__action-menu')) {
-                closeAllMessageMenus();
             }
             const button = event.target.closest('[data-contact-action]');
             if (!button) {
