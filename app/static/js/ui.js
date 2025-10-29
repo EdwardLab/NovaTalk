@@ -79,7 +79,8 @@
             button.addEventListener('click', () => {
                 const host = button.closest('[data-flash]');
                 if (host) {
-                    host.classList.add('transition-layer');
+                    host.classList.remove('transition-layer');
+                    host.classList.add('fade-out');
                     host.addEventListener(
                         'animationend',
                         () => {

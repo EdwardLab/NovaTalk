@@ -1373,3 +1373,11 @@ body.mobile-primary-open .md-drawer {
     }
 }
 
+.md-snackbar.fade-out {
+  animation: fadeOutDown 260ms ease forwards;
+}
+
+@keyframes fadeOutDown {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(20px); }
+}
