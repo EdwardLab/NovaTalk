@@ -54,7 +54,7 @@ body.dark-mode {
 
 .toast {
     opacity: 0;
-    transform: translate(-50%, -8px);
+    transform: translate3d(0, -8px, 0);
     align-self: center;
     width: 100%;
     border-radius: 0.75rem;
@@ -80,7 +80,7 @@ body.dark-mode {
 
 .toast.is-visible {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translate3d(0, 0, 0);
 }
 
 .toast__message {
