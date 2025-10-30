@@ -871,6 +871,33 @@
         return `${padNumber(parts.year, 4)}-${padNumber(parts.month, 2)}-${padNumber(parts.day, 2)}`;
     };
 
+    const closeAllMessageMenus = () => {
+        const menus = root.querySelectorAll('.message__menu');
+        menus.forEach((menu) => {
+            menu.classList.remove('is-open');
+            const trigger = menu.previousElementSibling;
+            if (trigger?.dataset.messageMenuTrigger === 'true') {
+                trigger.setAttribute('aria-expanded', 'false');
+            }
+        });
+    };
+
+    const toggleMessageMenu = (trigger) => {
+        if (!trigger) {
+            return;
+        }
+        const menu = trigger.nextElementSibling;
+        if (!(menu instanceof HTMLElement)) {
+            return;
+        }
+        const willOpen = !menu.classList.contains('is-open');
+        closeAllMessageMenus();
+        if (willOpen) {
+            menu.classList.add('is-open');
+            trigger.setAttribute('aria-expanded', 'true');
+        }
+    };
+
     const buildMessageElement = (message) => {
         const isOutgoing = Number(message.sender?.id || message.sender_id) === Number(state.user.id);
         const isDeleted = Boolean(message.is_deleted);
@@ -956,6 +983,74 @@
             bubble.appendChild(attachments);
         }
 
+        if (!isEditing) {
+            const showMenu = canEdit || (canDelete && !isDeleted);
+            if (showMenu) {
+                bubble.classList.add('message__bubble--has-menu');
+                const menuWrapper = document.createElement('div');
+                menuWrapper.className = 'message__menu-wrapper';
+
+                const trigger = document.createElement('button');
+                trigger.type = 'button';
+                trigger.className = 'message__menu-trigger';
+                trigger.dataset.messageMenuTrigger = 'true';
+                trigger.setAttribute('aria-haspopup', 'true');
+                trigger.setAttribute('aria-expanded', 'false');
+                trigger.setAttribute('aria-label', 'Message actions');
+                const triggerIcon = document.createElement('span');
+                triggerIcon.className = 'material-symbols-rounded';
+                triggerIcon.textContent = 'more_vert';
+                trigger.appendChild(triggerIcon);
+                menuWrapper.appendChild(trigger);
+
+                const menu = document.createElement('div');
+                menu.className = 'message__menu';
+                menu.dataset.messageMenu = 'true';
+                menu.setAttribute('role', 'menu');
+
+                if (canEdit) {
+                    const editItem = document.createElement('button');
+                    editItem.type = 'button';
+                    editItem.className = 'message__menu-item';
+                    editItem.dataset.messageAction = 'edit';
+                    editItem.dataset.messageId = message.id;
+                    editItem.dataset.chatId = message.chat_id;
+                    editItem.setAttribute('role', 'menuitem');
+                    const editIcon = document.createElement('span');
+                    editIcon.className = 'material-symbols-rounded';
+                    editIcon.textContent = 'edit';
+                    const editLabel = document.createElement('span');
+                    editLabel.textContent = 'Edit';
+                    editItem.appendChild(editIcon);
+                    editItem.appendChild(editLabel);
+                    menu.appendChild(editItem);
+                }
+
+                if (canDelete && !isDeleted) {
+                    const deleteItem = document.createElement('button');
+                    deleteItem.type = 'button';
+                    deleteItem.className = 'message__menu-item';
+                    deleteItem.dataset.messageAction = 'delete';
+                    deleteItem.dataset.messageId = message.id;
+                    deleteItem.dataset.chatId = message.chat_id;
+                    deleteItem.setAttribute('role', 'menuitem');
+                    const deleteIcon = document.createElement('span');
+                    deleteIcon.className = 'material-symbols-rounded';
+                    deleteIcon.textContent = 'delete';
+                    const deleteLabel = document.createElement('span');
+                    deleteLabel.textContent = 'Delete';
+                    deleteItem.appendChild(deleteIcon);
+                    deleteItem.appendChild(deleteLabel);
+                    menu.appendChild(deleteItem);
+                }
+
+                if (menu.childElementCount > 0) {
+                    menuWrapper.appendChild(menu);
+                    bubble.appendChild(menuWrapper);
+                }
+            }
+        }
+
         const meta = document.createElement('div');
         meta.className = 'message__meta';
         const timestamp = document.createElement('time');
@@ -993,27 +1088,6 @@
             cancel.textContent = 'Cancel';
             actions.appendChild(save);
             actions.appendChild(cancel);
-        } else {
-            if (canEdit) {
-                const editButton = document.createElement('button');
-                editButton.type = 'button';
-                editButton.className = 'message__action';
-                editButton.dataset.messageAction = 'edit';
-                editButton.dataset.messageId = message.id;
-                editButton.dataset.chatId = message.chat_id;
-                editButton.textContent = 'Edit';
-                actions.appendChild(editButton);
-            }
-            if (canDelete && !isDeleted) {
-                const deleteButton = document.createElement('button');
-                deleteButton.type = 'button';
-                deleteButton.className = 'message__action message__action--danger';
-                deleteButton.dataset.messageAction = 'delete';
-                deleteButton.dataset.messageId = message.id;
-                deleteButton.dataset.chatId = message.chat_id;
-                deleteButton.textContent = 'Delete';
-                actions.appendChild(deleteButton);
-            }
         }
         if (actions.childElementCount > 0) {
             wrapper.appendChild(actions);
@@ -1982,9 +2056,21 @@
             });
         }
         root.addEventListener('click', (event) => {
+            const menuTrigger = event.target.closest('[data-message-menu-trigger]');
+            if (menuTrigger) {
+                event.preventDefault();
+                toggleMessageMenu(menuTrigger);
+                return;
+            }
+
+            if (!event.target.closest('.message__menu-wrapper')) {
+                closeAllMessageMenus();
+            }
+
             const messageButton = event.target.closest('[data-message-action]');
             if (messageButton) {
                 event.preventDefault();
+                closeAllMessageMenus();
                 const action = messageButton.dataset.messageAction;
                 const messageId = messageButton.dataset.messageId;
                 const chatId = Number(messageButton.dataset.chatId);
@@ -2104,6 +2190,16 @@
                 default:
                     done();
                     break;
+            }
+        });
+        root.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeAllMessageMenus();
+            }
+        });
+        document.addEventListener('click', (event) => {
+            if (!root.contains(event.target)) {
+                closeAllMessageMenus();
             }
         });
         root.addEventListener('input', (event) => {
