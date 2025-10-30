@@ -38,13 +38,7 @@
             <div class="avatar-controls">
                 <div class="avatar-controls__primary">
                     <div class="avatar-preview" data-avatar-container>
-                        {% if current_user.avatar_url %}
                             <img src="{{ current_user.avatar_url }}" alt="Avatar preview" class="avatar-preview__image" data-avatar-preview>
-                            <div class="avatar-preview__placeholder" data-avatar-placeholder hidden>{{ current_user.display_name[0] }}</div>
-                        {% else %}
-                            <img src="" alt="Avatar preview" class="avatar-preview__image" data-avatar-preview hidden>
-                            <div class="avatar-preview__placeholder" data-avatar-placeholder>{{ current_user.display_name[0] }}</div>
-                        {% endif %}
                     </div>
                     <label class="md-filled-button md-ripple" for="avatar-input">
                         <span class="material-symbols-rounded" aria-hidden="true">upload</span>
@@ -59,13 +53,7 @@
                 </div>
                 <div class="avatar-controls__preview">
                     <div class="avatar-live-preview" data-avatar-live-preview-container>
-                        {% if current_user.avatar_url %}
                             <img src="{{ current_user.avatar_url }}" alt="Avatar live preview" data-avatar-live-preview>
-                            <div class="avatar-live-preview__placeholder" data-avatar-live-placeholder hidden>{{ current_user.display_name[0] }}</div>
-                        {% else %}
-                            <img src="" alt="Avatar live preview" data-avatar-live-preview hidden>
-                            <div class="avatar-live-preview__placeholder" data-avatar-live-placeholder>{{ current_user.display_name[0] }}</div>
-                        {% endif %}
                     </div>
                     <p class="muted-text muted-text--small">Live preview updates as you drag.</p>
                 </div>
