@@ -5,7 +5,7 @@ from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy import func
 
 from app import db, socketio
-from app.auth.forms import LoginForm, ProfileForm, RegistrationForm
+from app.auth.forms import ChangePasswordForm, LoginForm, ProfileForm, RegistrationForm
 from app.models import Avatar, FriendRequest, Friendship, User
 from app.utils.storage import save_avatar
 
@@ -79,20 +79,24 @@ def logout():
 @login_required
 def profile():
     current_username = (current_user.username or "").lstrip("@")
-    form = ProfileForm(
+    is_profile_submit = request.method == "POST" and "save_changes" in request.form
+    profile_form = ProfileForm(
         original_username=current_username,
         original_email=current_user.email,
         display_name=current_user.display_name,
         username=current_username,
         email=current_user.email,
         bio=current_user.bio,
+        formdata=request.form if is_profile_submit else None,
     )
 
-    if form.validate_on_submit():
-        current_user.display_name = form.display_name.data
-        current_user.username = form.username.data
-        current_user.email = form.email.data
-        current_user.bio = form.bio.data or ""
+    password_form = ChangePasswordForm()
+
+    if is_profile_submit and profile_form.validate():
+        current_user.display_name = profile_form.display_name.data
+        current_user.username = profile_form.username.data
+        current_user.email = profile_form.email.data
+        current_user.bio = profile_form.bio.data or ""
 
         avatar_file = request.files.get("avatar")
         if avatar_file and avatar_file.filename:
@@ -101,7 +105,11 @@ def profile():
                 filename = save_avatar(avatar_file, existing_filename=existing)
             except ValueError as exc:
                 flash(str(exc), "danger")
-                return render_template("auth/profile.html", form=form)
+                return render_template(
+                    "auth/profile.html",
+                    profile_form=profile_form,
+                    password_form=password_form,
+                )
 
             if current_user.avatar:
                 current_user.avatar.created_at = datetime.utcnow()
@@ -123,7 +131,16 @@ def profile():
             )
         flash("Profile updated", "success")
         return redirect(url_for("auth.profile"))
-    return render_template("auth/profile.html", form=form)
+
+    if password_form.update_password.data and password_form.validate():
+        current_user.set_password(password_form.new_password.data)
+        db.session.commit()
+        flash("Password updated", "success")
+        return redirect(url_for("auth.profile"))
+
+    return render_template(
+        "auth/profile.html", profile_form=profile_form, password_form=password_form
+    )
 
 
 @auth_bp.route("/profile/<username>")

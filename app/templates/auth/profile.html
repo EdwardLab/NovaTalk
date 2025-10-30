@@ -31,7 +31,7 @@
             <p class="hero-card__body" style="text-align:left;">Update how people see you across NovaTalk. Upload a square avatar, tweak the crop, and keep your contact details current.</p>
         </div>
         <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>
-            {{ form.hidden_tag() }}
+            {{ profile_form.hidden_tag() }}
             <input type="hidden" name="avatar_offset_x" data-avatar-offset-x value="0">
             <input type="hidden" name="avatar_offset_y" data-avatar-offset-y value="0">
             <input type="hidden" name="avatar_scale" data-avatar-scale value="1">
@@ -61,35 +61,69 @@
             <div class="form-grid">
                 <div class="input-field">
                     <label for="display_name">Display name</label>
-                    {{ form.display_name(id='display_name', class_='input-field__control') }}
-                    {% for error in form.display_name.errors %}
+                    {{ profile_form.display_name(id='display_name', class_='input-field__control') }}
+                    {% for error in profile_form.display_name.errors %}
                         <p class="badge badge--danger">{{ error }}</p>
                     {% endfor %}
                 </div>
                 <div class="input-field">
                     <label for="username">Username</label>
-                    {{ form.username(id='username', class_='input-field__control') }}
-                    {% for error in form.username.errors %}
+                    {{ profile_form.username(id='username', class_='input-field__control') }}
+                    {% for error in profile_form.username.errors %}
                         <p class="badge badge--danger">{{ error }}</p>
                     {% endfor %}
                 </div>
                 <div class="input-field">
                     <label for="email">Email</label>
-                    {{ form.email(id='email', class_='input-field__control') }}
-                    {% for error in form.email.errors %}
+                    {{ profile_form.email(id='email', class_='input-field__control') }}
+                    {% for error in profile_form.email.errors %}
                         <p class="badge badge--danger">{{ error }}</p>
                     {% endfor %}
                 </div>
                 <div class="input-field" style="grid-column: 1 / -1;">
                     <label for="bio">Bio</label>
-                    {{ form.bio(id='bio', class_='input-field__control', rows='4') }}
-                    {% for error in form.bio.errors %}
+                    {{ profile_form.bio(id='bio', class_='input-field__control', rows='4') }}
+                    {% for error in profile_form.bio.errors %}
                         <p class="badge badge--danger">{{ error }}</p>
                     {% endfor %}
                 </div>
             </div>
             <div style="grid-column: 1 / -1;">
-                {{ form.submit(class_='md-filled-button md-ripple button-block') }}
+                {{ profile_form.save_changes(class_='md-filled-button md-ripple button-block') }}
+            </div>
+        </form>
+        <div class="fade-divider" role="presentation"></div>
+        <div>
+            <h2 class="surface-card__title" style="text-align:left;">Change password</h2>
+            <p class="hero-card__body" style="text-align:left;">Update your password to keep your account secure. Enter your current password and confirm the new password twice.</p>
+        </div>
+        <form method="post" class="form-grid" novalidate>
+            {{ password_form.hidden_tag() }}
+            <div class="form-grid">
+                <div class="input-field">
+                    <label for="current_password">Current password</label>
+                    {{ password_form.current_password(id='current_password', class_='input-field__control', autocomplete='current-password') }}
+                    {% for error in password_form.current_password.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                <div class="input-field">
+                    <label for="new_password">New password</label>
+                    {{ password_form.new_password(id='new_password', class_='input-field__control', autocomplete='new-password') }}
+                    {% for error in password_form.new_password.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                <div class="input-field">
+                    <label for="confirm_new_password">Confirm new password</label>
+                    {{ password_form.confirm_new_password(id='confirm_new_password', class_='input-field__control', autocomplete='new-password') }}
+                    {% for error in password_form.confirm_new_password.errors %}
+                        <p class="badge badge--danger">{{ error }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div style="grid-column: 1 / -1;">
+                {{ password_form.update_password(class_='md-filled-button md-ripple button-block') }}
             </div>
         </form>
     </section>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from flask_login import current_user
 from flask_wtf import FlaskForm
 from wtforms import PasswordField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError
@@ -59,7 +60,7 @@ class ProfileForm(FlaskForm):
     username = StringField("Username", validators=[DataRequired(), Length(max=80), username_validator])
     email = StringField("Email", validators=[DataRequired(), Email(), Length(max=255)])
     bio = TextAreaField("Bio", validators=[Length(max=500)])
-    submit = SubmitField("Save changes")
+    save_changes = SubmitField("Save changes")
 
     def __init__(self, original_username: str, original_email: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -86,3 +87,19 @@ class ProfileForm(FlaskForm):
             if existing and existing.email.lower() != self.original_email_lower:
                 raise ValidationError("Email already registered.")
         field.data = email
+
+
+class ChangePasswordForm(FlaskForm):
+    current_password = PasswordField("Current password", validators=[DataRequired()])
+    new_password = PasswordField(
+        "New password", validators=[DataRequired(), Length(min=6)]
+    )
+    confirm_new_password = PasswordField(
+        "Confirm new password",
+        validators=[DataRequired(), EqualTo("new_password")],
+    )
+    update_password = SubmitField("Update password")
+
+    def validate_current_password(self, field):
+        if not current_user.check_password(field.data):
+            raise ValidationError("Incorrect current password.")
