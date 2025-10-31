@@ -9,11 +9,12 @@ from app.utils.datetime import to_utc_iso
 
 class Message(db.Model):
     __tablename__ = "messages"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
 
     id = db.Column(db.Integer, primary_key=True)
     chat_id = db.Column(db.Integer, db.ForeignKey("chats.id"), nullable=False)
     sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    body = db.Column(db.Text, nullable=True)
+    body = db.Column(db.Text(collation="utf8mb4_unicode_ci"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_edited_at = db.Column(db.DateTime, nullable=True)
     is_deleted = db.Column(db.Boolean, default=False, nullable=False)

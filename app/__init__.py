@@ -1,4 +1,6 @@
 import os
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -23,6 +25,16 @@ def create_app(config_object=None):
     app = Flask(__name__, instance_relative_config=False)
 
     database_url = os.environ.get("DATABASE_URL", "mysql+pymysql://user:password@localhost/novatalk")
+
+    # Ensure MySQL connections support 4-byte Unicode (emoji, etc.) by default.
+    if database_url.startswith("mysql://") or database_url.startswith("mysql+pymysql://"):
+        parsed = urlparse(database_url)
+        query_params = parse_qs(parsed.query, keep_blank_values=True)
+        if "charset" not in query_params:
+            query_params["charset"] = ["utf8mb4"]
+            new_query = urlencode(query_params, doseq=True)
+            parsed = parsed._replace(query=new_query)
+            database_url = urlunparse(parsed)
     if database_url.startswith("sqlite:///"):
         raw_path = database_url.replace("sqlite:///", "", 1)
         if raw_path and raw_path != ":memory__":
