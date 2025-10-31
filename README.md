@@ -1,19 +1,28 @@
 # NovaTalk
 
-NovaTalk is a modern, self-hostable chat platform built with Flask, SQLAlchemy, and Flask-SocketIO. The refreshed interface embraces Material Design 3 principles with rich motion, theming, and a three-column messenger layout.
+NovaTalk is a lightweight self-hosted chat platform built with Flask, SQLAlchemy, and Flask-SocketIO.
+ It’s designed to feel familiar and modern — a clean, Material Design 3 interface, smooth animations, and a focused three-column messenger layout.
 
 ![chat.png](app/static/img/demo/chat.png)
 
-## Highlights
+## ✨ Features
 
-- 🎨 Material Design 3 experience with responsive light/dark themes
-- 💬 Real-time direct and group messaging powered by Socket.IO
-- 🖼️ Avatar uploads with live cropping preview and message attachments
-- 👥 Friend requests, blocking, and public profile pages
-- 🛡️ Comprehensive CSRF protection for forms and AJAX flows
-- 🛠️ Admin CLI for provisioning and maintaining users from the terminal
+- **Material Design 3** interface with light/dark themes that adapt smoothly
+- **Real-time messaging** using Socket.IO (works for DMs and group chats)
+- **Avatar uploads** with live crop preview + image attachments in chat
+- **Friend system** — requests, blocking, and public profile pages
+- **CSRF-safe everywhere** (forms + AJAX included)
+- **Command-line admin tools** for creating and managing users directly
 
-## Getting started
+## 🚀 Getting Started
+
+### Docker
+
+(Under development)
+
+
+
+### Development Server
 
 ### 1. Install dependencies
 
@@ -31,7 +40,7 @@ python setup.py
 
 Provide your MySQL connection details, an uploads directory, and the credentials for the first administrator account. The wizard creates a `.env` file and initialises the database schema.
 
-### 3. Launch NovaTalk (Under development, currently only tested on the development server)
+### 3. Launch NovaTalk (Production Server under development, currently only tested on the development server)
 
 ```
 python app.py
@@ -57,11 +66,17 @@ python cli.py set-password --username alice --password N3wSecret!
 
 All commands run inside the Flask application context and persist changes via SQLAlchemy with Werkzeug-secured hashes.
 
+For more CLI usages, please refer to [CLI Documents](docs/cli.md).
+
 ## Environment variables
 
 - `SECRET_KEY` – Flask secret key (generated during setup)
+
 - `DATABASE_URL` – SQLAlchemy connection string, e.g. `mysql+pymysql://user:password@localhost:3306/novatalk`
+
 - `UPLOAD_FOLDER` – Absolute path where avatars and message images will be stored
+
+  (Check .env file)
 
 ## Development notes
 
