@@ -336,24 +336,12 @@
         return ensureArray(state.chats).find((chat) => String(chat.id) === String(chatId));
     };
 
-    const isChatAdmin = (chatId) => {
-        const chat = getChatById(chatId);
-        const members = ensureArray(chat?.members);
-        return members.some((member) => {
-            const userId = Number(member?.user?.id || member?.user_id);
-            return userId === Number(state.user.id) && Boolean(member?.is_admin);
-        });
-    };
-
     const canManageMessage = (message) => {
         if (!message) {
             return false;
         }
         const senderId = Number(message.sender?.id || message.sender_id);
-        if (senderId === Number(state.user.id)) {
-            return true;
-        }
-        return isChatAdmin(message.chat_id);
+        return senderId === Number(state.user.id);
     };
 
     const isPersistedMessage = (message) => {

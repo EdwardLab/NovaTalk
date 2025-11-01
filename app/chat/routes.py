@@ -76,13 +76,7 @@ def _serialize_message(message: Message) -> Dict[str, Any]:
 def _can_manage_message(message: Message, user: User) -> bool:
     if not message or not user:
         return False
-    if message.sender_id == user.id:
-        return True
-    chat = message.chat
-    if not chat:
-        return False
-    membership = chat.members.filter_by(user_id=user.id).first()
-    return bool(membership and membership.is_admin)
+    return message.sender_id == user.id
 
 
 def _serialize_chat_summary(chat: Chat, user: User) -> Dict[str, Any]:
