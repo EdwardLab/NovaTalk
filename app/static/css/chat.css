@@ -293,12 +293,13 @@ body.dark-mode {
 
 .chat-roster__item {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto 1fr auto;
     gap: 0.85rem;
     padding: 0.75rem 0.85rem;
     border-radius: 1rem;
     cursor: pointer;
     transition: background 0.2s ease, transform 0.2s ease;
+    align-items: center;
 }
 
 .chat-roster__item:hover,
@@ -326,6 +327,35 @@ body.dark-mode {
     margin-top: 0.35rem;
     font-size: 0.78rem;
     color: var(--text-subtle);
+}
+
+.chat-roster__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.chat-roster__item:hover .chat-roster__actions,
+.chat-roster__item:focus-within .chat-roster__actions,
+.chat-roster__item.is-active .chat-roster__actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.chat-roster__delete {
+    color: var(--text-subtle);
+}
+
+.chat-roster__delete .material-symbols-rounded {
+    font-size: 1.2rem;
+}
+
+.chat-roster__delete:hover,
+.chat-roster__delete:focus-visible {
+    color: var(--toast-error);
 }
 
 .contacts-search {

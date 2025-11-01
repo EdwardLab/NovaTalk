@@ -468,6 +468,55 @@ def handle_chat_leave(data):
     return {"ok": True, "chat_id": chat_id}
 
 
+@socketio.on("chat:delete")
+def handle_chat_delete(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    chat_id: Optional[int] = None
+    if isinstance(data, dict):
+        chat_id = data.get("chat_id")
+    elif isinstance(data, (int, str)):
+        try:
+            chat_id = int(data)
+        except (TypeError, ValueError):
+            chat_id = None
+    if not chat_id:
+        return {"ok": False, "error": "Chat ID required"}
+    chat = Chat.query.get(chat_id)
+    if not chat or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Chat not found."}
+    membership = chat.members.filter_by(user_id=current_user.id).first()
+    if not membership:
+        return {"ok": False, "error": "You are not part of this chat."}
+    chat_identifier = chat.id
+    try:
+        db.session.delete(membership)
+        db.session.flush()
+        remaining_members = chat.members.order_by(ChatMember.joined_at.asc()).all()
+        serialized_members = [_serialize_member(member) for member in remaining_members]
+        chat_removed = len(serialized_members) == 0
+        if chat_removed:
+            db.session.delete(chat)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete chat.")
+        return {"ok": False, "error": "Unable to delete conversation."}
+    leave_room(f"chat_{chat_identifier}")
+    socketio.emit(
+        "chat:deleted",
+        {"chat_id": chat_identifier, "initiator_id": current_user.id},
+        room=f"user_{current_user.id}",
+    )
+    if not chat_removed:
+        socketio.emit(
+            "chat:member_update",
+            {"chat_id": chat_identifier, "members": serialized_members},
+            room=f"chat_{chat_identifier}",
+        )
+    return {"ok": True, "chat_id": chat_identifier, "deleted": chat_removed}
+
+
 @socketio.on("chat:typing")
 def handle_chat_typing(data):
     if not current_user.is_authenticated:
@@ -878,6 +927,34 @@ def handle_group_respond(data):
     if invite.inviter:
         _broadcast_contacts(invite.inviter)
     return {"ok": True, "status": "declined"}
+
+
+@socketio.on("group:cancel")
+def handle_group_cancel(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    invite_id = data.get("invite_id")
+    try:
+        invite_id = int(invite_id)
+    except (TypeError, ValueError):
+        invite_id = None
+    if not invite_id:
+        return {"ok": False, "error": "Invite ID required."}
+    invite = GroupInvite.query.filter_by(id=invite_id, inviter_id=current_user.id).first()
+    if not invite or invite.status != "pending":
+        return {"ok": False, "error": "Invitation not found."}
+    try:
+        invite.status = "cancelled"
+        invite.responded_at = datetime.utcnow()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to cancel group invite.")
+        return {"ok": False, "error": "Unable to cancel invite."}
+    _broadcast_contacts(current_user)
+    if invite.invitee:
+        _broadcast_contacts(invite.invitee)
+    return {"ok": True, "status": "cancelled", "invite_id": invite.id}
 
 
 @socketio.on("contacts:search")

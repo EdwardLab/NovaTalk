@@ -628,8 +628,29 @@
                 if (String(chat.id) === String(state.ui.activeChatId)) {
                     item.classList.add('is-active');
                 }
+                const actions = document.createElement('div');
+                actions.className = 'chat-roster__actions';
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'md-icon-button md-ripple chat-roster__delete';
+                deleteButton.dataset.chatAction = 'delete';
+                deleteButton.dataset.chatId = chat.id;
+                const deleteLabelText = chat.is_group ? 'Leave group' : 'Delete conversation';
+                deleteButton.setAttribute('aria-label', deleteLabelText);
+                deleteButton.title = deleteLabelText;
+                const deleteIcon = document.createElement('span');
+                deleteIcon.className = 'material-symbols-rounded';
+                deleteIcon.setAttribute('aria-hidden', 'true');
+                deleteIcon.textContent = 'delete';
+                const deleteLabel = document.createElement('span');
+                deleteLabel.className = 'sr-only';
+                deleteLabel.textContent = deleteLabelText;
+                deleteButton.appendChild(deleteIcon);
+                deleteButton.appendChild(deleteLabel);
+                actions.appendChild(deleteButton);
                 item.appendChild(avatar);
                 item.appendChild(body);
+                item.appendChild(actions);
                 list.appendChild(item);
             });
             container.appendChild(list);
@@ -638,6 +659,62 @@
             elements.chatsCount.textContent = String(chats.length);
             elements.chatsCount.hidden = chats.length === 0;
         }
+    };
+
+    const removeChatLocally = (chatId) => {
+        if (chatId === null || chatId === undefined) {
+            return false;
+        }
+        const idString = String(chatId);
+        const chats = ensureArray(state.chats);
+        const filtered = chats.filter((chat) => String(chat.id) !== idString);
+        if (filtered.length === chats.length) {
+            return false;
+        }
+        state.chats = filtered;
+        const numericId = Number(chatId);
+        if (!Number.isNaN(numericId)) {
+            messageStore.delete(numericId);
+        }
+        const wasActive = String(state.ui.activeChatId) === idString;
+        if (wasActive) {
+            closeConversation();
+        } else {
+            renderChats();
+        }
+        return true;
+    };
+
+    const requestChatDeletion = (chatId, trigger) => {
+        const chat = getChatById(chatId);
+        if (!chat) {
+            showToast('Conversation not found.', 'error');
+            return;
+        }
+        const isGroup = Boolean(chat.is_group);
+        const partnerName = chat.partner?.display_name || chat.partner?.username || 'this contact';
+        const chatName = chat.name || partnerName || 'this conversation';
+        const promptMessage = isGroup
+            ? `Leave the group "${chatName}"?\n\nYou will need a new invite to rejoin.`
+            : `Delete your conversation with ${chatName}?\n\nThis removes it from your recent conversations.`;
+        const confirmed = window.confirm(promptMessage);
+        if (!confirmed) {
+            return;
+        }
+        if (trigger) {
+            trigger.disabled = true;
+        }
+        emitSocket('chat:delete', { chat_id: chatId }, (response) => {
+            if (trigger) {
+                trigger.disabled = false;
+            }
+            if (!response?.ok) {
+                showToast(response?.error || 'Unable to delete conversation.', 'error');
+                return;
+            }
+            removeChatLocally(chatId);
+            showToast(isGroup ? 'Left group conversation.' : 'Conversation deleted.', 'info');
+        });
     };
 
     const renderContactList = (list, target, emptyText) => {
@@ -773,6 +850,13 @@
                 note.className = 'contact-card__note';
                 note.textContent = 'Pending approval';
                 actions.appendChild(note);
+                const cancel = document.createElement('button');
+                cancel.type = 'button';
+                cancel.className = 'md-text-button md-ripple';
+                cancel.dataset.groupInviteAction = 'cancel';
+                cancel.dataset.groupInviteId = entry.id;
+                cancel.textContent = 'Cancel invite';
+                actions.appendChild(cancel);
             }
             card.appendChild(body);
             card.appendChild(actions);
@@ -1855,6 +1939,18 @@
         }
     };
 
+    const handleChatDeleted = (payload) => {
+        console.log('socket event: chat:deleted', payload);
+        if (!payload?.chat_id) {
+            return;
+        }
+        const chatId = Number(payload.chat_id);
+        if (Number.isNaN(chatId)) {
+            return;
+        }
+        removeChatLocally(chatId);
+    };
+
     const handleFriendUpdate = (payload) => {
         console.log('socket event: friend:update', payload);
         if (payload?.pending_count !== undefined) {
@@ -1961,6 +2057,7 @@
         socket.off('chat:member_update');
         socket.off('message:updated');
         socket.off('message:deleted');
+        socket.off('chat:deleted');
 
         socket.on('chat:history', handleChatHistory);
         socket.on('new_message', handleIncomingMessage);
@@ -1970,6 +2067,7 @@
         socket.on('chat:member_update', handleChatMemberUpdate);
         socket.on('message:updated', handleMessageUpdated);
         socket.on('message:deleted', handleMessageDeleted);
+        socket.on('chat:deleted', handleChatDeleted);
         socket.on('chat:typing', (payload) => {
             console.log('socket event: chat:typing', payload);
         });
@@ -1984,11 +2082,27 @@
         });
         if (elements.chatList) {
             elements.chatList.addEventListener('click', (event) => {
+                const actionButton = event.target.closest('[data-chat-action]');
+                if (actionButton) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const action = actionButton.dataset.chatAction;
+                    const targetId = Number(
+                        actionButton.dataset.chatId || actionButton.closest('[data-chat-id]')?.dataset.chatId
+                    );
+                    if (!Number.isNaN(targetId) && action === 'delete') {
+                        requestChatDeletion(targetId, actionButton);
+                    }
+                    return;
+                }
                 const item = event.target.closest('[data-chat-id]');
                 if (!item) {
                     return;
                 }
                 const chatId = Number(item.dataset.chatId);
+                if (Number.isNaN(chatId)) {
+                    return;
+                }
                 switchTab('chats');
                 openChat(chatId);
             });
@@ -1996,6 +2110,9 @@
         if (elements.chatList) {
             elements.chatList.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
+                    if (event.target.closest('[data-chat-action]')) {
+                        return;
+                    }
                     const item = event.target.closest('[data-chat-id]');
                     if (!item) {
                         return;
@@ -2208,10 +2325,25 @@
             }
             const action = button.dataset.groupInviteAction;
             const inviteId = Number(button.dataset.groupInviteId);
-            if (!inviteId || !action) {
+            if (!inviteId || Number.isNaN(inviteId) || !action) {
                 return;
             }
             button.disabled = true;
+            if (action === 'cancel') {
+                emitSocket('group:cancel', { invite_id: inviteId }, (response) => {
+                    button.disabled = false;
+                    if (!response?.ok) {
+                        showToast(response?.error || 'Unable to cancel invite.', 'error');
+                        return;
+                    }
+                    state.contacts.group_invites.outgoing = ensureArray(
+                        state.contacts.group_invites.outgoing
+                    ).filter((invite) => invite.id !== inviteId);
+                    renderContacts();
+                    showToast('Group invite cancelled.', 'info');
+                });
+                return;
+            }
             emitSocket('group:respond', { invite_id: inviteId, action }, (response) => {
                 button.disabled = false;
                 if (!response?.ok) {
