@@ -11,3 +11,5 @@ email-validator>=2.0
 PyMySQL>=1.1
 eventlet>=0.35
 Pillow>=10.0
+eventlet
+gunicorn

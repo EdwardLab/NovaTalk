@@ -20,11 +20,9 @@ NovaTalk is a lightweight self-hosted chat platform built with Flask, SQLAlchemy
 
 (Under development)
 
+### Production Server
 
-
-### Development Server
-
-### 1. Install dependencies
+#### 1. Install dependencies
 
 ```
 python -m venv .venv
@@ -32,7 +30,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Run the setup wizard
+#### 2. Run the setup wizard
 
 ```
 python setup.py
@@ -40,7 +38,21 @@ python setup.py
 
 Provide your MySQL connection details, an uploads directory, and the credentials for the first administrator account. The wizard creates a `.env` file and initialises the database schema.
 
-### 3. Launch NovaTalk (Production Server under development, currently only tested on the development server)
+#### 3. Start Production Server
+
+```
+gunicorn -k eventlet -w 1 "app:app" -b 0.0.0.0:5000
+```
+
+The application defaults to `http://localhost:5000`.
+
+(Only works on Linux)
+
+### Development Server
+
+(Works on both Windows & Linux)
+
+#### 1. Launch Development Server
 
 ```
 python app.py
