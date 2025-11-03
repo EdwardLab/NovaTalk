@@ -41,7 +41,7 @@ Provide your MySQL connection details, an uploads directory, and the credentials
 #### 3. Start Production Server
 
 ```
-gunicorn -k eventlet -w 1 "app:app" -b 0.0.0.0:5000
+gunicorn -k eventlet -w 1 "app:create_app()" -b 0.0.0.0:5000
 ```
 
 The application defaults to `http://localhost:5000`.
@@ -99,7 +99,7 @@ For more CLI usages, please refer to [CLI Documents](docs/cli.md).
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+This project is licensed under the AGPL-V3 License. See [LICENSE](LICENSE) for details.
 
 <div align="center">
   <a href="https://moonshot.hackclub.com" target="_blank">
