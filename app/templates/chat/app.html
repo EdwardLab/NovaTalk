@@ -210,6 +210,10 @@
                     <h1 data-conversation-title>Conversation</h1>
                     <p data-conversation-subtitle></p>
                 </div>
+                <button type="button" class="md-icon-button md-ripple" data-group-members hidden aria-expanded="false">
+                    <span class="material-symbols-rounded" aria-hidden="true">group</span>
+                    <span class="sr-only">View members</span>
+                </button>
                 <button type="button" class="md-icon-button md-ripple" data-group-invite hidden>
                     <span class="material-symbols-rounded" aria-hidden="true">person_add</span>
                     <span class="sr-only">Invite to group</span>
@@ -219,6 +223,26 @@
                     <span class="sr-only">Close conversation</span>
                 </button>
             </header>
+            <div class="conversation-members" data-group-members-panel hidden>
+                <div class="conversation-members__inner">
+                    <div class="conversation-members__header">
+                        <div>
+                            <h2>Group members</h2>
+                            <p>Manage participants in this chat.</p>
+                        </div>
+                        <button type="button" class="md-icon-button md-ripple" data-group-members-close>
+                            <span class="material-symbols-rounded" aria-hidden="true">close</span>
+                            <span class="sr-only">Hide members</span>
+                        </button>
+                    </div>
+                    <div class="conversation-members__content">
+                        <div class="conversation-members__empty" data-group-members-empty hidden>
+                            <p>No other members yet.</p>
+                        </div>
+                        <ul class="conversation-members__list" data-group-members-list></ul>
+                    </div>
+                </div>
+            </div>
             <div class="conversation-body" data-conversation-body>
                 <div class="conversation-placeholder" data-conversation-placeholder>
                     <span class="material-symbols-rounded" aria-hidden="true">chat</span>

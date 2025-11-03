@@ -72,6 +72,7 @@
             pendingCount: bootState.ui?.pendingCount || 0,
             pendingGroupInvites: bootState.ui?.pendingGroupInvites || 0,
             editingMessage: null,
+            showGroupMembers: false,
         },
     };
 
@@ -154,6 +155,11 @@
         profileTimezoneModes: Array.from(root.querySelectorAll('[data-profile-timezone-mode]')),
         profileTimezoneOffset: root.querySelector('[data-profile-timezone-offset]'),
         groupInviteButton: root.querySelector('[data-group-invite]'),
+        groupMembersToggle: root.querySelector('[data-group-members]'),
+        groupMembersPanel: root.querySelector('[data-group-members-panel]'),
+        groupMembersList: root.querySelector('[data-group-members-list]'),
+        groupMembersEmpty: root.querySelector('[data-group-members-empty]'),
+        groupMembersClose: root.querySelector('[data-group-members-close]'),
     };
 
     const populateTimezoneOptions = () => {
@@ -336,6 +342,19 @@
         return ensureArray(state.chats).find((chat) => String(chat.id) === String(chatId));
     };
 
+    const getActiveChat = () => getChatById(state.ui.activeChatId);
+
+    const formatUsername = (value) => {
+        if (!value) {
+            return '';
+        }
+        const normalized = String(value).trim();
+        if (!normalized) {
+            return '';
+        }
+        return normalized.startsWith('@') ? normalized : `@${normalized}`;
+    };
+
     const canManageMessage = (message) => {
         if (!message) {
             return false;
@@ -405,6 +424,118 @@
             .toUpperCase();
         target.classList.add('is-initials');
         target.textContent = initials || 'U';
+    };
+
+    const renderGroupMembers = () => {
+        const panel = elements.groupMembersPanel;
+        const list = elements.groupMembersList;
+        const toggle = elements.groupMembersToggle;
+        const emptyState = elements.groupMembersEmpty;
+        if (!panel || !list || !toggle) {
+            return;
+        }
+        const chat = getActiveChat();
+        const isGroup = Boolean(chat?.is_group);
+        if (!isGroup) {
+            panel.hidden = true;
+            list.innerHTML = '';
+            if (emptyState) {
+                emptyState.hidden = true;
+            }
+            toggle.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            state.ui.showGroupMembers = false;
+            return;
+        }
+        toggle.hidden = false;
+        toggle.setAttribute('aria-expanded', state.ui.showGroupMembers ? 'true' : 'false');
+        if (!state.ui.showGroupMembers) {
+            panel.hidden = true;
+            return;
+        }
+        panel.hidden = false;
+        const members = ensureArray(chat.members);
+        list.innerHTML = '';
+        if (!members.length) {
+            if (emptyState) {
+                emptyState.hidden = false;
+            }
+            return;
+        }
+        if (emptyState) {
+            emptyState.hidden = true;
+        }
+        const currentUserId = Number(state.user.id);
+        const currentMembership = members.find(
+            (member) => Number(member?.user?.id || member?.user_id) === currentUserId
+        );
+        const isAdmin = Boolean(currentMembership?.is_admin);
+        const adminCount = members.filter((member) => Boolean(member?.is_admin)).length;
+        members.forEach((member) => {
+            const listItem = document.createElement('li');
+            listItem.className = 'conversation-members__item';
+            const avatar = document.createElement('div');
+            avatar.className = 'conversation-members__avatar';
+            setAvatar(avatar, {
+                avatar: member.user?.avatar,
+                display: member.user?.display_name,
+            });
+            listItem.appendChild(avatar);
+            const meta = document.createElement('div');
+            meta.className = 'conversation-members__meta';
+            const name = document.createElement('p');
+            name.className = 'conversation-members__name';
+            const displayName = member.user?.display_name || member.user?.username || 'Member';
+            name.textContent = displayName;
+            meta.appendChild(name);
+            const details = document.createElement('p');
+            details.className = 'conversation-members__details';
+            const username = formatUsername(member.user?.username);
+            const joinedLabel = member.joined_at
+                ? `Joined ${formatRelativeDate(member.joined_at)}`
+                : '';
+            const detailParts = [username, joinedLabel].filter(Boolean);
+            details.textContent = detailParts.join(' · ');
+            meta.appendChild(details);
+            const tags = document.createElement('div');
+            tags.className = 'conversation-members__tags';
+            let hasTag = false;
+            if (member.is_admin) {
+                const adminTag = document.createElement('span');
+                adminTag.className = 'conversation-members__tag';
+                adminTag.textContent = 'Admin';
+                tags.appendChild(adminTag);
+                hasTag = true;
+            }
+            if (Number(member.user?.id || member.user_id) === currentUserId) {
+                const youTag = document.createElement('span');
+                youTag.className = 'conversation-members__tag';
+                youTag.textContent = 'You';
+                tags.appendChild(youTag);
+                hasTag = true;
+            }
+            if (hasTag) {
+                meta.appendChild(tags);
+            }
+            listItem.appendChild(meta);
+            const actions = document.createElement('div');
+            actions.className = 'conversation-members__actions';
+            const canRemoveMember =
+                isAdmin &&
+                Number(member.user?.id || member.user_id) !== currentUserId &&
+                (!member.is_admin || adminCount > 1);
+            if (canRemoveMember) {
+                const removeButton = document.createElement('button');
+                removeButton.type = 'button';
+                removeButton.className = 'md-text-button md-ripple conversation-members__remove';
+                removeButton.dataset.groupMemberRemove = String(member.id);
+                removeButton.dataset.memberName = displayName;
+                removeButton.textContent = 'Remove';
+                actions.appendChild(removeButton);
+            }
+            listItem.appendChild(actions);
+            list.appendChild(listItem);
+        });
     };
 
     const showToast = (message, variant = 'info') => {
@@ -659,6 +790,7 @@
             elements.chatsCount.textContent = String(chats.length);
             elements.chatsCount.hidden = chats.length === 0;
         }
+        renderGroupMembers();
     };
 
     const removeChatLocally = (chatId) => {
@@ -1535,12 +1667,16 @@
         if (String(state.ui.activeChatId) === String(chatId)) {
             return;
         }
+        let chat = getChatById(chatId);
         state.ui.activeChatId = chatId;
         state.ui.editingMessage = null;
+        if (!chat?.is_group) {
+            state.ui.showGroupMembers = false;
+        }
         renderChats();
         clearComposer();
         syncMobileDrawer();
-        const chat = state.chats.find((item) => String(item.id) === String(chatId));
+        chat = chat || getChatById(chatId);
         if (elements.conversationHeader) {
             elements.conversationHeader.hidden = false;
         }
@@ -1573,6 +1709,7 @@
             );
             elements.groupInviteButton.hidden = !isGroupAdmin;
         }
+        renderGroupMembers();
         const existingMessages = messageStore.get(chatId);
         if (existingMessages) {
             renderMessages(chatId, existingMessages);
@@ -1650,7 +1787,9 @@
     const closeConversation = () => {
         state.ui.activeChatId = null;
         state.ui.editingMessage = null;
+        state.ui.showGroupMembers = false;
         renderChats();
+        renderGroupMembers();
         if (elements.conversationHeader) {
             elements.conversationHeader.hidden = true;
         }
@@ -1664,6 +1803,10 @@
         }
         if (elements.groupInviteButton) {
             elements.groupInviteButton.hidden = true;
+        }
+        if (elements.groupMembersToggle) {
+            elements.groupMembersToggle.hidden = true;
+            elements.groupMembersToggle.setAttribute('aria-expanded', 'false');
         }
         clearComposer();
         syncMobileDrawer();
@@ -1811,6 +1954,7 @@
         renderProfile();
         renderProfileForm();
         renderChats();
+        renderGroupMembers();
         renderContacts();
         syncMobileDrawer();
     };
@@ -1843,6 +1987,7 @@
         if (String(payload.chat_id) === String(state.ui.activeChatId)) {
             state.ui.editingMessage = null;
             renderMessages(payload.chat_id, decorated);
+            renderGroupMembers();
         }
     };
 
@@ -1917,6 +2062,7 @@
             state.chats[chatIndex] = { ...state.chats[chatIndex], ...payload.chat };
         }
         renderChats();
+        renderGroupMembers();
         if (String(state.ui.activeChatId) === String(payload.chat_id)) {
             const activeChat = state.chats[chatIndex];
             if (elements.conversationSubtitle) {
@@ -2125,6 +2271,59 @@
         if (elements.closeConversation) {
             elements.closeConversation.addEventListener('click', () => {
                 closeConversation();
+            });
+        }
+        if (elements.groupMembersToggle) {
+            elements.groupMembersToggle.addEventListener('click', () => {
+                state.ui.showGroupMembers = !state.ui.showGroupMembers;
+                renderGroupMembers();
+            });
+        }
+        if (elements.groupMembersClose) {
+            elements.groupMembersClose.addEventListener('click', () => {
+                state.ui.showGroupMembers = false;
+                renderGroupMembers();
+                try {
+                    elements.groupMembersToggle?.focus({ preventScroll: true });
+                } catch (error) {
+                    // ignore focus errors
+                }
+            });
+        }
+        if (elements.groupMembersPanel) {
+            elements.groupMembersPanel.addEventListener('click', (event) => {
+                const removeButton = event.target.closest('[data-group-member-remove]');
+                if (!removeButton) {
+                    return;
+                }
+                event.preventDefault();
+                if (!state.ui.activeChatId) {
+                    showToast('Open a group chat first.', 'error');
+                    return;
+                }
+                const membershipId = Number(removeButton.dataset.groupMemberRemove);
+                if (Number.isNaN(membershipId)) {
+                    return;
+                }
+                const memberName =
+                    (removeButton.dataset.memberName || 'this member').trim() || 'this member';
+                const confirmed = window.confirm(`Remove ${memberName} from the group?`);
+                if (!confirmed) {
+                    return;
+                }
+                removeButton.disabled = true;
+                emitSocket(
+                    'group:remove_member',
+                    { chat_id: state.ui.activeChatId, member_id: membershipId },
+                    (response) => {
+                        removeButton.disabled = false;
+                        if (!response?.ok) {
+                            showToast(response?.error || 'Unable to remove member.', 'error');
+                            return;
+                        }
+                        showToast(`Removed ${memberName} from the group.`, 'info');
+                    }
+                );
             });
         }
         if (elements.newChatButton) {

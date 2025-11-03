@@ -957,6 +957,82 @@ def handle_group_cancel(data):
     return {"ok": True, "status": "cancelled", "invite_id": invite.id}
 
 
+@socketio.on("group:remove_member")
+def handle_group_remove_member(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    chat_id = data.get("chat_id")
+    try:
+        chat_id = int(chat_id)
+    except (TypeError, ValueError):
+        chat_id = None
+    if not chat_id:
+        return {"ok": False, "error": "Chat ID required."}
+    chat = Chat.query.get(chat_id)
+    if not chat or not chat.is_group or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Group not found."}
+    requester_membership = chat.members.filter_by(user_id=current_user.id).first()
+    if not requester_membership or not requester_membership.is_admin:
+        return {"ok": False, "error": "Only group admins can manage members."}
+    member_identifier = data.get("member_id") or data.get("membership_id") or data.get("chat_member_id")
+    membership_id: Optional[int] = None
+    try:
+        membership_id = int(member_identifier)
+    except (TypeError, ValueError):
+        membership_id = None
+    target_membership: Optional[ChatMember] = None
+    if membership_id:
+        target_membership = chat.members.filter_by(id=membership_id).first()
+    if not target_membership:
+        user_identifier = data.get("user_id") or data.get("member_user_id")
+        try:
+            user_identifier = int(user_identifier)
+        except (TypeError, ValueError):
+            user_identifier = None
+        if user_identifier:
+            target_membership = chat.members.filter_by(user_id=user_identifier).first()
+    if not target_membership:
+        return {"ok": False, "error": "Member not found."}
+    if target_membership.user_id == current_user.id:
+        return {"ok": False, "error": "Use the leave option to exit the group."}
+    if target_membership.is_admin:
+        admin_count = chat.members.filter_by(is_admin=True).count()
+        if admin_count <= 1:
+            return {"ok": False, "error": "At least one admin must remain in the group."}
+    removed_user_id = target_membership.user_id
+    removed_membership_id = target_membership.id
+    try:
+        db.session.delete(target_membership)
+        db.session.flush()
+        remaining_members = chat.members.order_by(ChatMember.joined_at.asc()).all()
+        serialized_members = [_serialize_member(member) for member in remaining_members]
+        chat_removed = len(remaining_members) == 0
+        if chat_removed:
+            db.session.delete(chat)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to remove group member.")
+        return {"ok": False, "error": "Unable to remove member."}
+    socketio.emit(
+        "chat:member_update",
+        {"chat_id": chat.id, "members": serialized_members},
+        room=f"chat_{chat.id}",
+    )
+    socketio.emit(
+        "chat:deleted",
+        {"chat_id": chat.id, "initiator_id": current_user.id, "removed": True},
+        room=f"user_{removed_user_id}",
+    )
+    if chat_removed:
+        socketio.emit(
+            "chat:deleted",
+            {"chat_id": chat.id, "initiator_id": current_user.id, "removed": True},
+            room=f"chat_{chat.id}",
+        )
+    return {"ok": True, "chat_id": chat.id, "member_id": removed_membership_id}
+
+
 @socketio.on("contacts:search")
 def handle_contacts_search(data):
     if not current_user.is_authenticated:
