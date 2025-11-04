@@ -7,3 +7,4 @@ app/static/uploads/avatars/*
 app/static/uploads/messages/*
 !.gitkeep
 migrations/
+.vscode/

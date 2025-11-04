@@ -469,7 +469,9 @@
         const currentMembership = members.find(
             (member) => Number(member?.user?.id || member?.user_id) === currentUserId
         );
-        const isAdmin = Boolean(currentMembership?.is_admin);
+        const isOwner = Boolean(currentMembership?.is_owner);
+        const isAdmin = Boolean(currentMembership?.is_admin) || isOwner;
+        const canManageMembers = isAdmin || isOwner;
         const adminCount = members.filter((member) => Boolean(member?.is_admin)).length;
         members.forEach((member) => {
             const listItem = document.createElement('li');
@@ -500,6 +502,13 @@
             const tags = document.createElement('div');
             tags.className = 'conversation-members__tags';
             let hasTag = false;
+            if (member.is_owner) {
+                const ownerTag = document.createElement('span');
+                ownerTag.className = 'conversation-members__tag conversation-members__tag--owner';
+                ownerTag.textContent = 'Owner';
+                tags.appendChild(ownerTag);
+                hasTag = true;
+            }
             if (member.is_admin) {
                 const adminTag = document.createElement('span');
                 adminTag.className = 'conversation-members__tag';
@@ -520,9 +529,11 @@
             listItem.appendChild(meta);
             const actions = document.createElement('div');
             actions.className = 'conversation-members__actions';
+            const isSelf = Number(member.user?.id || member.user_id) === currentUserId;
             const canRemoveMember =
-                isAdmin &&
-                Number(member.user?.id || member.user_id) !== currentUserId &&
+                canManageMembers &&
+                !isSelf &&
+                !member.is_owner &&
                 (!member.is_admin || adminCount > 1);
             if (canRemoveMember) {
                 const removeButton = document.createElement('button');
@@ -532,6 +543,24 @@
                 removeButton.dataset.memberName = displayName;
                 removeButton.textContent = 'Remove';
                 actions.appendChild(removeButton);
+            }
+            if (isOwner && !isSelf && !member.is_owner) {
+                const toggleButton = document.createElement('button');
+                toggleButton.type = 'button';
+                toggleButton.className = 'md-text-button md-ripple conversation-members__role';
+                toggleButton.dataset.groupMemberRole = String(member.id);
+                toggleButton.dataset.roleAction = member.is_admin ? 'demote' : 'promote';
+                toggleButton.dataset.memberName = displayName;
+                toggleButton.textContent = member.is_admin ? 'Remove admin' : 'Make admin';
+                actions.appendChild(toggleButton);
+
+                const transferButton = document.createElement('button');
+                transferButton.type = 'button';
+                transferButton.className = 'md-text-button md-ripple conversation-members__transfer';
+                transferButton.dataset.groupMemberTransfer = String(member.id);
+                transferButton.dataset.memberName = displayName;
+                transferButton.textContent = 'Transfer ownership';
+                actions.appendChild(transferButton);
             }
             listItem.appendChild(actions);
             list.appendChild(listItem);
@@ -824,10 +853,16 @@
             return;
         }
         const isGroup = Boolean(chat.is_group);
+        const currentMembership = ensureArray(chat?.members).find(
+            (member) => Number(member?.user?.id || member?.user_id) === Number(state.user.id)
+        );
+        const isOwner = Boolean(currentMembership?.is_owner);
         const partnerName = chat.partner?.display_name || chat.partner?.username || 'this contact';
         const chatName = chat.name || partnerName || 'this conversation';
         const promptMessage = isGroup
-            ? `Leave the group "${chatName}"?\n\nYou will need a new invite to rejoin.`
+            ? isOwner
+                ? `Disband the group "${chatName}" for everyone?\n\nThis removes the conversation for all members.`
+                : `Leave the group "${chatName}"?\n\nYou will need a new invite to rejoin.`
             : `Delete your conversation with ${chatName}?\n\nThis removes it from your recent conversations.`;
         const confirmed = window.confirm(promptMessage);
         if (!confirmed) {
@@ -836,7 +871,8 @@
         if (trigger) {
             trigger.disabled = true;
         }
-        emitSocket('chat:delete', { chat_id: chatId }, (response) => {
+        const eventName = isGroup && isOwner ? 'group:disband' : 'chat:delete';
+        emitSocket(eventName, { chat_id: chatId }, (response) => {
             if (trigger) {
                 trigger.disabled = false;
             }
@@ -845,7 +881,11 @@
                 return;
             }
             removeChatLocally(chatId);
-            showToast(isGroup ? 'Left group conversation.' : 'Conversation deleted.', 'info');
+            if (isGroup && isOwner) {
+                showToast('Disbanded the group for all members.', 'info');
+            } else {
+                showToast(isGroup ? 'Left group conversation.' : 'Conversation deleted.', 'info');
+            }
         });
     };
 
@@ -1705,7 +1745,7 @@
                 (member) =>
                     Boolean(chat?.is_group) &&
                     Number(member?.user?.id || member?.user_id) === Number(state.user.id) &&
-                    Boolean(member?.is_admin)
+                    (Boolean(member?.is_admin) || Boolean(member?.is_owner))
             );
             elements.groupInviteButton.hidden = !isGroupAdmin;
         }
@@ -2078,7 +2118,7 @@
                     (member) =>
                         Boolean(activeChat?.is_group) &&
                         Number(member?.user?.id || member?.user_id) === Number(state.user.id) &&
-                        Boolean(member?.is_admin)
+                        (Boolean(member?.is_admin) || Boolean(member?.is_owner))
                 );
                 elements.groupInviteButton.hidden = !isGroupAdmin;
             }
@@ -2293,37 +2333,112 @@
         if (elements.groupMembersPanel) {
             elements.groupMembersPanel.addEventListener('click', (event) => {
                 const removeButton = event.target.closest('[data-group-member-remove]');
-                if (!removeButton) {
-                    return;
-                }
-                event.preventDefault();
-                if (!state.ui.activeChatId) {
-                    showToast('Open a group chat first.', 'error');
-                    return;
-                }
-                const membershipId = Number(removeButton.dataset.groupMemberRemove);
-                if (Number.isNaN(membershipId)) {
-                    return;
-                }
-                const memberName =
-                    (removeButton.dataset.memberName || 'this member').trim() || 'this member';
-                const confirmed = window.confirm(`Remove ${memberName} from the group?`);
-                if (!confirmed) {
-                    return;
-                }
-                removeButton.disabled = true;
-                emitSocket(
-                    'group:remove_member',
-                    { chat_id: state.ui.activeChatId, member_id: membershipId },
-                    (response) => {
-                        removeButton.disabled = false;
-                        if (!response?.ok) {
-                            showToast(response?.error || 'Unable to remove member.', 'error');
-                            return;
-                        }
-                        showToast(`Removed ${memberName} from the group.`, 'info');
+                if (removeButton) {
+                    event.preventDefault();
+                    if (!state.ui.activeChatId) {
+                        showToast('Open a group chat first.', 'error');
+                        return;
                     }
-                );
+                    const membershipId = Number(removeButton.dataset.groupMemberRemove);
+                    if (Number.isNaN(membershipId)) {
+                        return;
+                    }
+                    const memberName =
+                        (removeButton.dataset.memberName || 'this member').trim() || 'this member';
+                    const confirmed = window.confirm(`Remove ${memberName} from the group?`);
+                    if (!confirmed) {
+                        return;
+                    }
+                    removeButton.disabled = true;
+                    emitSocket(
+                        'group:remove_member',
+                        { chat_id: state.ui.activeChatId, member_id: membershipId },
+                        (response) => {
+                            removeButton.disabled = false;
+                            if (!response?.ok) {
+                                showToast(response?.error || 'Unable to remove member.', 'error');
+                                return;
+                            }
+                            showToast(`Removed ${memberName} from the group.`, 'info');
+                        }
+                    );
+                    return;
+                }
+                const roleButton = event.target.closest('[data-group-member-role]');
+                if (roleButton) {
+                    event.preventDefault();
+                    if (!state.ui.activeChatId) {
+                        showToast('Open a group chat first.', 'error');
+                        return;
+                    }
+                    const membershipId = Number(roleButton.dataset.groupMemberRole);
+                    if (Number.isNaN(membershipId)) {
+                        return;
+                    }
+                    const action = roleButton.dataset.roleAction === 'demote' ? 'demote' : 'promote';
+                    const isAdmin = action === 'promote';
+                    const memberName =
+                        (roleButton.dataset.memberName || 'this member').trim() || 'this member';
+                    const promptMessage = isAdmin
+                        ? `Give ${memberName} admin privileges?`
+                        : `Remove ${memberName}'s admin privileges?`;
+                    const confirmed = window.confirm(promptMessage);
+                    if (!confirmed) {
+                        return;
+                    }
+                    roleButton.disabled = true;
+                    emitSocket(
+                        'group:set_admin',
+                        { chat_id: state.ui.activeChatId, member_id: membershipId, is_admin: isAdmin },
+                        (response) => {
+                            roleButton.disabled = false;
+                            if (!response?.ok) {
+                                showToast(response?.error || 'Unable to update admin status.', 'error');
+                                return;
+                            }
+                            showToast(
+                                isAdmin
+                                    ? `Granted admin privileges to ${memberName}.`
+                                    : `Removed admin privileges from ${memberName}.`,
+                                'info'
+                            );
+                        }
+                    );
+                    return;
+                }
+                const transferButton = event.target.closest('[data-group-member-transfer]');
+                if (transferButton) {
+                    event.preventDefault();
+                    if (!state.ui.activeChatId) {
+                        showToast('Open a group chat first.', 'error');
+                        return;
+                    }
+                    const membershipId = Number(transferButton.dataset.groupMemberTransfer);
+                    if (Number.isNaN(membershipId)) {
+                        return;
+                    }
+                    const memberName =
+                        (transferButton.dataset.memberName || 'this member').trim() || 'this member';
+                    const confirmed = window.confirm(
+                        `Transfer ownership of the group to ${memberName}?`
+                    );
+                    if (!confirmed) {
+                        return;
+                    }
+                    transferButton.disabled = true;
+                    emitSocket(
+                        'group:transfer_owner',
+                        { chat_id: state.ui.activeChatId, member_id: membershipId },
+                        (response) => {
+                            transferButton.disabled = false;
+                            if (!response?.ok) {
+                                showToast(response?.error || 'Unable to transfer ownership.', 'error');
+                                return;
+                            }
+                            showToast(`Transferred ownership to ${memberName}.`, 'success');
+                        }
+                    );
+                }
             });
         }
         if (elements.newChatButton) {

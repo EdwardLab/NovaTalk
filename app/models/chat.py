@@ -22,6 +22,9 @@ class Chat(db.Model):
     def get_admins(self):
         return [member.user for member in self.members.filter_by(is_admin=True)]
 
+    def get_owner(self):
+        return self.members.filter_by(is_owner=True).first()
+
 
 class ChatMember(db.Model):
     __tablename__ = "chat_members"
@@ -30,6 +33,7 @@ class ChatMember(db.Model):
     chat_id = db.Column(db.Integer, db.ForeignKey("chats.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
+    is_owner = db.Column(db.Boolean, default=False)
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship("User", backref=db.backref("chat_memberships", cascade="all, delete-orphan"))

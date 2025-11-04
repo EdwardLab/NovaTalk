@@ -56,6 +56,7 @@ def _serialize_member(member: ChatMember) -> Dict[str, Any]:
         "id": member.id,
         "user": member.user.to_public_dict(),
         "is_admin": member.is_admin,
+        "is_owner": member.is_owner,
         "joined_at": to_utc_iso(member.joined_at),
     }
 
@@ -488,6 +489,11 @@ def handle_chat_delete(data):
     membership = chat.members.filter_by(user_id=current_user.id).first()
     if not membership:
         return {"ok": False, "error": "You are not part of this chat."}
+    if chat.is_group and membership.is_owner:
+        return {
+            "ok": False,
+            "error": "Owners must transfer ownership or disband the group before leaving.",
+        }
     chat_identifier = chat.id
     try:
         db.session.delete(membership)
@@ -776,7 +782,11 @@ def handle_chat_create(data):
     db.session.add(chat)
     try:
         db.session.flush()
-        db.session.add(ChatMember(chat_id=chat.id, user_id=current_user.id, is_admin=True))
+        db.session.add(
+            ChatMember(
+                chat_id=chat.id, user_id=current_user.id, is_admin=True, is_owner=True
+            )
+        )
         created_invites: List[GroupInvite] = []
         for invitee in invitees:
             if invitee.id == current_user.id:
@@ -824,7 +834,7 @@ def handle_group_invite(data):
     if not chat or not chat.is_group:
         return {"ok": False, "error": "Group chat not found"}
     membership = chat.members.filter_by(user_id=current_user.id).first()
-    if not membership or not membership.is_admin:
+    if not membership or not (membership.is_admin or membership.is_owner):
         return {"ok": False, "error": "Only group admins can invite members."}
     invitees = _resolve_invitees(
         data.get("invitees"),
@@ -972,7 +982,9 @@ def handle_group_remove_member(data):
     if not chat or not chat.is_group or not chat.has_member(current_user.id):
         return {"ok": False, "error": "Group not found."}
     requester_membership = chat.members.filter_by(user_id=current_user.id).first()
-    if not requester_membership or not requester_membership.is_admin:
+    if not requester_membership or not (
+        requester_membership.is_admin or requester_membership.is_owner
+    ):
         return {"ok": False, "error": "Only group admins can manage members."}
     member_identifier = data.get("member_id") or data.get("membership_id") or data.get("chat_member_id")
     membership_id: Optional[int] = None
@@ -995,6 +1007,8 @@ def handle_group_remove_member(data):
         return {"ok": False, "error": "Member not found."}
     if target_membership.user_id == current_user.id:
         return {"ok": False, "error": "Use the leave option to exit the group."}
+    if target_membership.is_owner:
+        return {"ok": False, "error": "Transfer ownership before removing the owner."}
     if target_membership.is_admin:
         admin_count = chat.members.filter_by(is_admin=True).count()
         if admin_count <= 1:
@@ -1032,6 +1046,182 @@ def handle_group_remove_member(data):
         )
     return {"ok": True, "chat_id": chat.id, "member_id": removed_membership_id}
 
+
+@socketio.on("group:set_admin")
+def handle_group_set_admin(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    chat_id = data.get("chat_id")
+    try:
+        chat_id = int(chat_id)
+    except (TypeError, ValueError):
+        chat_id = None
+    if not chat_id:
+        return {"ok": False, "error": "Chat ID required."}
+    chat = Chat.query.get(chat_id)
+    if not chat or not chat.is_group or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Group not found."}
+    requester_membership = chat.members.filter_by(user_id=current_user.id).first()
+    if not requester_membership or not requester_membership.is_owner:
+        return {"ok": False, "error": "Only the group owner can manage admins."}
+    target_identifier = data.get("member_id") or data.get("membership_id")
+    try:
+        target_identifier = int(target_identifier)
+    except (TypeError, ValueError):
+        target_identifier = None
+    target_membership: Optional[ChatMember] = None
+    if target_identifier:
+        target_membership = chat.members.filter_by(id=target_identifier).first()
+    if not target_membership:
+        user_identifier = data.get("user_id")
+        try:
+            user_identifier = int(user_identifier)
+        except (TypeError, ValueError):
+            user_identifier = None
+        if user_identifier:
+            target_membership = chat.members.filter_by(user_id=user_identifier).first()
+    if not target_membership:
+        return {"ok": False, "error": "Member not found."}
+    if target_membership.is_owner:
+        return {"ok": False, "error": "Owners already have full permissions."}
+    desired_admin_raw = data.get("is_admin")
+    if isinstance(desired_admin_raw, str):
+        desired_admin = desired_admin_raw.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+            "promote",
+        }
+    else:
+        desired_admin = bool(desired_admin_raw)
+    if target_membership.is_admin == desired_admin:
+        return {
+            "ok": True,
+            "chat_id": chat.id,
+            "member": _serialize_member(target_membership),
+        }
+    try:
+        target_membership.is_admin = desired_admin
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to update admin status.")
+        return {"ok": False, "error": "Unable to update admin privileges."}
+    socketio.emit(
+        "chat:member_update",
+        {
+            "chat_id": chat.id,
+            "members": [
+                _serialize_member(member)
+                for member in chat.members.order_by(ChatMember.joined_at.asc())
+            ],
+        },
+        room=f"chat_{chat.id}",
+    )
+    return {
+        "ok": True,
+        "chat_id": chat.id,
+        "member": _serialize_member(target_membership),
+    }
+
+
+@socketio.on("group:transfer_owner")
+def handle_group_transfer_owner(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    chat_id = data.get("chat_id")
+    try:
+        chat_id = int(chat_id)
+    except (TypeError, ValueError):
+        chat_id = None
+    if not chat_id:
+        return {"ok": False, "error": "Chat ID required."}
+    chat = Chat.query.get(chat_id)
+    if not chat or not chat.is_group or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Group not found."}
+    current_owner = chat.members.filter_by(user_id=current_user.id).first()
+    if not current_owner or not current_owner.is_owner:
+        return {"ok": False, "error": "Only the group owner can transfer ownership."}
+    target_identifier = data.get("member_id") or data.get("membership_id")
+    try:
+        target_identifier = int(target_identifier)
+    except (TypeError, ValueError):
+        target_identifier = None
+    target_membership: Optional[ChatMember] = None
+    if target_identifier:
+        target_membership = chat.members.filter_by(id=target_identifier).first()
+    if not target_membership:
+        user_identifier = data.get("user_id")
+        try:
+            user_identifier = int(user_identifier)
+        except (TypeError, ValueError):
+            user_identifier = None
+        if user_identifier:
+            target_membership = chat.members.filter_by(user_id=user_identifier).first()
+    if not target_membership:
+        return {"ok": False, "error": "Member not found."}
+    if target_membership.user_id == current_user.id:
+        return {"ok": False, "error": "You already own this group."}
+    try:
+        current_owner.is_owner = False
+        if not current_owner.is_admin:
+            current_owner.is_admin = True
+        target_membership.is_owner = True
+        target_membership.is_admin = True
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to transfer ownership.")
+        return {"ok": False, "error": "Unable to transfer ownership."}
+    socketio.emit(
+        "chat:member_update",
+        {
+            "chat_id": chat.id,
+            "members": [
+                _serialize_member(member)
+                for member in chat.members.order_by(ChatMember.joined_at.asc())
+            ],
+        },
+        room=f"chat_{chat.id}",
+    )
+    return {
+        "ok": True,
+        "chat_id": chat.id,
+        "member": _serialize_member(target_membership),
+    }
+
+
+@socketio.on("group:disband")
+def handle_group_disband(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+    chat_id = data.get("chat_id")
+    try:
+        chat_id = int(chat_id)
+    except (TypeError, ValueError):
+        chat_id = None
+    if not chat_id:
+        return {"ok": False, "error": "Chat ID required."}
+    chat = Chat.query.get(chat_id)
+    if not chat or not chat.is_group or not chat.has_member(current_user.id):
+        return {"ok": False, "error": "Group not found."}
+    owner_membership = chat.members.filter_by(user_id=current_user.id).first()
+    if not owner_membership or not owner_membership.is_owner:
+        return {"ok": False, "error": "Only the group owner can disband the group."}
+    member_user_ids = [member.user_id for member in chat.members.all()]
+    try:
+        db.session.delete(chat)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to disband group.")
+        return {"ok": False, "error": "Unable to disband group."}
+    payload = {"chat_id": chat_id, "initiator_id": current_user.id, "disbanded": True}
+    socketio.emit("chat:deleted", payload, room=f"chat_{chat_id}")
+    for user_id in member_user_ids:
+        socketio.emit("chat:deleted", payload, room=f"user_{user_id}")
+    return {"ok": True, "chat_id": chat_id, "disbanded": True}
 
 @socketio.on("contacts:search")
 def handle_contacts_search(data):

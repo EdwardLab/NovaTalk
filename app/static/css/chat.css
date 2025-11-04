@@ -643,6 +643,11 @@ body.dark-mode .chat-app__main {
     font-weight: 600;
 }
 
+.conversation-members__tag--owner {
+    background: color-mix(in srgb, var(--md-sys-color-tertiary) 22%, transparent);
+    color: color-mix(in srgb, var(--md-sys-color-tertiary) 88%, var(--text-strong) 12%);
+}
+
 .conversation-members__actions {
     display: flex;
     align-items: center;
