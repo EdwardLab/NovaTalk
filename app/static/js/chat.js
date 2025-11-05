@@ -431,51 +431,47 @@
         const list = elements.groupMembersList;
         const toggle = elements.groupMembersToggle;
         const emptyState = elements.groupMembersEmpty;
-        if (!panel || !list || !toggle) {
-            return;
-        }
+        if (!panel || !list || !toggle) return;
+
         const chat = getActiveChat();
         const isGroup = Boolean(chat?.is_group);
         if (!isGroup) {
             panel.hidden = true;
             list.innerHTML = '';
-            if (emptyState) {
-                emptyState.hidden = true;
-            }
+            if (emptyState) emptyState.hidden = true;
             toggle.hidden = true;
             toggle.setAttribute('aria-expanded', 'false');
             state.ui.showGroupMembers = false;
             return;
         }
+
         toggle.hidden = false;
         toggle.setAttribute('aria-expanded', state.ui.showGroupMembers ? 'true' : 'false');
         if (!state.ui.showGroupMembers) {
             panel.hidden = true;
             return;
         }
+
         panel.hidden = false;
         const members = ensureArray(chat.members);
         list.innerHTML = '';
         if (!members.length) {
-            if (emptyState) {
-                emptyState.hidden = false;
-            }
+            if (emptyState) emptyState.hidden = false;
             return;
         }
-        if (emptyState) {
-            emptyState.hidden = true;
-        }
+        if (emptyState) emptyState.hidden = true;
+
         const currentUserId = Number(state.user.id);
-        const currentMembership = members.find(
-            (member) => Number(member?.user?.id || member?.user_id) === currentUserId
-        );
-        const isOwner = Boolean(currentMembership?.is_owner);
-        const isAdmin = Boolean(currentMembership?.is_admin) || isOwner;
-        const canManageMembers = isAdmin || isOwner;
-        const adminCount = members.filter((member) => Boolean(member?.is_admin)).length;
-        members.forEach((member) => {
+        const currentMembership = members.find(m => Number(m?.user?.id || m?.user_id) === currentUserId) || {};
+        const isOwner = Boolean(currentMembership.is_owner);
+        const isAdmin = Boolean(currentMembership.is_admin);
+        const canManageMembers = isOwner || isAdmin;
+        const adminCount = members.filter(m => Boolean(m?.is_admin)).length;
+
+        members.forEach(member => {
             const listItem = document.createElement('li');
             listItem.className = 'conversation-members__item';
+
             const avatar = document.createElement('div');
             avatar.className = 'conversation-members__avatar';
             setAvatar(avatar, {
@@ -483,6 +479,7 @@
                 display: member.user?.display_name,
             });
             listItem.appendChild(avatar);
+
             const meta = document.createElement('div');
             meta.className = 'conversation-members__meta';
             const name = document.createElement('p');
@@ -490,60 +487,30 @@
             const displayName = member.user?.display_name || member.user?.username || 'Member';
             name.textContent = displayName;
             meta.appendChild(name);
-            const details = document.createElement('p');
-            details.className = 'conversation-members__details';
-            const username = formatUsername(member.user?.username);
-            const joinedLabel = member.joined_at
-                ? `Joined ${formatRelativeDate(member.joined_at)}`
-                : '';
-            const detailParts = [username, joinedLabel].filter(Boolean);
-            details.textContent = detailParts.join(' · ');
-            meta.appendChild(details);
+
             const tags = document.createElement('div');
             tags.className = 'conversation-members__tags';
-            let hasTag = false;
-            if (member.is_owner) {
-                const ownerTag = document.createElement('span');
-                ownerTag.className = 'conversation-members__tag conversation-members__tag--owner';
-                ownerTag.textContent = 'Owner';
-                tags.appendChild(ownerTag);
-                hasTag = true;
-            }
-            if (member.is_admin) {
-                const adminTag = document.createElement('span');
-                adminTag.className = 'conversation-members__tag';
-                adminTag.textContent = 'Admin';
-                tags.appendChild(adminTag);
-                hasTag = true;
-            }
-            if (Number(member.user?.id || member.user_id) === currentUserId) {
-                const youTag = document.createElement('span');
-                youTag.className = 'conversation-members__tag';
-                youTag.textContent = 'You';
-                tags.appendChild(youTag);
-                hasTag = true;
-            }
-            if (hasTag) {
-                meta.appendChild(tags);
-            }
+            if (member.is_owner) tags.innerHTML += `<span class="conversation-members__tag conversation-members__tag--owner">Owner</span>`;
+            if (member.is_admin) tags.innerHTML += `<span class="conversation-members__tag">Admin</span>`;
+            if (Number(member.user?.id || member.user_id) === currentUserId) tags.innerHTML += `<span class="conversation-members__tag">You</span>`;
+            if (tags.innerHTML) meta.appendChild(tags);
             listItem.appendChild(meta);
+
             const actions = document.createElement('div');
             actions.className = 'conversation-members__actions';
             const isSelf = Number(member.user?.id || member.user_id) === currentUserId;
-            const canRemoveMember =
-                canManageMembers &&
-                !isSelf &&
-                !member.is_owner &&
-                (!member.is_admin || adminCount > 1);
-            if (canRemoveMember) {
+
+            if (canManageMembers && !isSelf) {
                 const removeButton = document.createElement('button');
                 removeButton.type = 'button';
                 removeButton.className = 'md-text-button md-ripple conversation-members__remove';
                 removeButton.dataset.groupMemberRemove = String(member.id);
                 removeButton.dataset.memberName = displayName;
                 removeButton.textContent = 'Remove';
+                removeButton.disabled = member.is_owner && !isOwner;
                 actions.appendChild(removeButton);
             }
+
             if (isOwner && !isSelf && !member.is_owner) {
                 const toggleButton = document.createElement('button');
                 toggleButton.type = 'button';
@@ -553,7 +520,9 @@
                 toggleButton.dataset.memberName = displayName;
                 toggleButton.textContent = member.is_admin ? 'Remove admin' : 'Make admin';
                 actions.appendChild(toggleButton);
+            }
 
+            if (isOwner && !isSelf && !member.is_owner) {
                 const transferButton = document.createElement('button');
                 transferButton.type = 'button';
                 transferButton.className = 'md-text-button md-ripple conversation-members__transfer';
@@ -562,10 +531,13 @@
                 transferButton.textContent = 'Transfer ownership';
                 actions.appendChild(transferButton);
             }
+
             listItem.appendChild(actions);
             list.appendChild(listItem);
         });
     };
+
+
 
     const showToast = (message, variant = 'info') => {
         if (!elements.toastHost || !message) {
@@ -2888,4 +2860,5 @@
     mobileQuery.addEventListener('change', syncMobileDrawer);
     bindEvents();
     setupSocket();
+
 })();

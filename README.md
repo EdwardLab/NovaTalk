@@ -1,7 +1,9 @@
 # NovaTalk
 
 NovaTalk is a lightweight self-hosted chat platform built with Flask, SQLAlchemy, and Flask-SocketIO.
- It’s designed to feel familiar and modern — a clean, Material Design 3 interface, smooth animations, and a focused three-column messenger layout.
+ It’s designed to feel familiar and modern — a clean, Material Design 3 interface, and smooth animations
+
+
 
 ![chat.png](app/static/img/demo/chat.png)
 

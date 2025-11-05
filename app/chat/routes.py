@@ -982,10 +982,14 @@ def handle_group_remove_member(data):
     if not chat or not chat.is_group or not chat.has_member(current_user.id):
         return {"ok": False, "error": "Group not found."}
     requester_membership = chat.members.filter_by(user_id=current_user.id).first()
-    if not requester_membership or not (
-        requester_membership.is_admin or requester_membership.is_owner
-    ):
-        return {"ok": False, "error": "Only group admins can manage members."}
+    can_manage_members = bool(requester_membership) and (
+        requester_membership.is_owner or requester_membership.is_admin
+    )
+    if not can_manage_members:
+        return {
+            "ok": False,
+            "error": "Only group admins or the owner can manage members.",
+        }
     member_identifier = data.get("member_id") or data.get("membership_id") or data.get("chat_member_id")
     membership_id: Optional[int] = None
     try:
@@ -1011,7 +1015,7 @@ def handle_group_remove_member(data):
         return {"ok": False, "error": "Transfer ownership before removing the owner."}
     if target_membership.is_admin:
         admin_count = chat.members.filter_by(is_admin=True).count()
-        if admin_count <= 1:
+        if admin_count <= 1 and not requester_membership.is_owner:
             return {"ok": False, "error": "At least one admin must remain in the group."}
     removed_user_id = target_membership.user_id
     removed_membership_id = target_membership.id
