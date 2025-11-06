@@ -13,3 +13,4 @@ eventlet>=0.35
 Pillow>=10.0
 eventlet
 gunicorn
+cryptography
