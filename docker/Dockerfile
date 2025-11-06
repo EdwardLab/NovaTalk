@@ -13,7 +13,7 @@ WORKDIR /
 RUN mkdir -p /uploads
 ENV UPLOAD_FOLDER=/uploads
 ENV SECRET_KEY=changeme
-ENV DATABASE_URL=mysql+pymysql://user:password@db:3306/novatalk
+ENV DATABASE_URL=${DATABASE_URL}
 ENV FLASK_APP=app:create_app
 EXPOSE 5000
 CMD ["bash", "-c", "python /app/docker_setup.py && cd /app && exec gunicorn -k eventlet -w 1 'app:create_app()' -b 0.0.0.0:5000"]
