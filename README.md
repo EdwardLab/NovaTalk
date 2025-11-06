@@ -1,13 +1,14 @@
 # NovaTalk
 
-NovaTalk is a lightweight self-hosted chat platform built with Flask, SQLAlchemy, and Flask-SocketIO.
- It’s designed to feel familiar and modern — a clean, Material Design 3 interface, and smooth animations
+NovaTalk is a lightweight, self-hosted chat platform built with Flask, SQLAlchemy, and Flask-SocketIO.
+
+It’s designed to feel familiar yet modern — offering a clean Material Design 3 interface, smooth animations, and full support for group chats (with roles and permissions), direct messaging, friends and contacts management, themes, customizable profiles, message editing, deletion, and more.
 
 
 
 ![chat.png](app/static/img/demo/chat.png)
 
-## ✨ Features
+## Features
 
 - **Material Design 3** interface with light/dark themes that adapt smoothly
 - **Real-time messaging** using Socket.IO (works for DMs and group chats)
@@ -16,11 +17,68 @@ NovaTalk is a lightweight self-hosted chat platform built with Flask, SQLAlchemy
 - **CSRF-safe everywhere** (forms + AJAX included)
 - **Command-line admin tools** for creating and managing users directly
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Docker
 
-(Under development)
+You can pull the latest image directly from Docker Hub:
+
+```
+docker pull edwardhsing/novatalk:latest
+```
+
+[Docker Hub](https://hub.docker.com/r/edwardhsing/novatalk)
+
+### Quick Start with Docker Compose
+
+Deploy NovaTalk together with a MySQL database using the following `docker-compose.yml`:
+
+```
+services:
+  db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root              # Change this in production
+      MYSQL_DATABASE: novatalk
+      MYSQL_USER: novatalk
+      MYSQL_PASSWORD: novatalk
+    volumes:
+      - db_data:/var/lib/mysql               # Persist MySQL data
+
+  web:
+    image: edwardhsing/novatalk:latest
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - "5000:5000"                          # Expose port 5000
+    environment:
+      DATABASE_URL: mysql+pymysql://novatalk:novatalk@db:3306/novatalk
+      ADMIN_USERNAME: admin                  # Initial admin username
+      ADMIN_EMAIL: admin@example.com         # Initial admin email
+      ADMIN_PASSWORD: admin123               # Initial admin password
+      ADMIN_DISPLAY_NAME: "Administrator"    # Admin User Display name
+      SECRET_KEY: supersecret                # Replace with a secure random string
+      UPLOAD_FOLDER: /uploads
+    volumes:
+      - ./uploads:/uploads                   # Mount local uploads directory
+
+volumes:
+  db_data:
+```
+
+> 💡 **Tip:** Update all credentials (`MYSQL_ROOT_PASSWORD`, `ADMIN_PASSWORD`, `SECRET_KEY`, etc.) before deployment.
+>  For production, consider using environment files (`.env`) and secrets management.
+
+Start the stack in detached mode:
+
+```
+docker compose up -d
+```
+
+Once the containers are running, open your browser at:
+ 👉 **http://0.0.0.0:5000**
 
 ### Production Server
 
@@ -52,8 +110,6 @@ The application defaults to `http://localhost:5000`.
 
 ### Development Server
 
-(Works on both Windows & Linux)
-
 #### 1. Launch Development Server
 
 ```
@@ -61,6 +117,8 @@ python app.py
 ```
 
 The application defaults to `http://localhost:5000`.
+
+(Works on both Windows & Linux)
 
 ## Administrative CLI
 
@@ -92,12 +150,20 @@ For more CLI usages, please refer to [CLI Documents](docs/cli.md).
 
   (Check .env file)
 
-## Development notes
+## Development Notes
 
-- The interface uses Material Web typography, elevation, and ripples with custom CSS tailored for NovaTalk.
-- Real-time messaging uses Flask-SocketIO with eventlet. Ensure eventlet is installed and use `socketio.run` in production.
-- File uploads are validated for image type and size and stored within `UPLOAD_FOLDER`.
-- To create migrations, run `flask db init`, `flask db migrate`, and `flask db upgrade` after setting `FLASK_APP=app:create_app`.
+- Uses Material Web typography, elevation, and ripple effects, customized with NovaTalk’s own CSS.
+
+- File uploads are validated for type and size before being saved under `UPLOAD_FOLDER`.
+
+- Run database migrations with:
+
+  ```
+  export FLASK_APP=app:create_app
+  flask db init
+  flask db migrate
+  flask db upgrade
+  ```
 
 ## License
 
