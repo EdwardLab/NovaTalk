@@ -1,4 +1,5 @@
 import secrets
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -51,6 +52,24 @@ def save_message_image(file: FileStorage) -> Optional[str]:
     file_path = upload_dir / filename
     file.save(file_path)
     return filename
+
+
+def duplicate_message_file(filename: str) -> str:
+    if not filename:
+        raise ValueError("Filename required.")
+    sanitized = secure_filename(Path(filename).name)
+    if not sanitized:
+        raise ValueError("Filename required.")
+
+    upload_dir = Path(current_app.config["UPLOAD_FOLDER"]) / "messages"
+    source_path = upload_dir / sanitized
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source attachment {sanitized} is missing.")
+
+    copy_name = _random_filename(sanitized)
+    destination = upload_dir / copy_name
+    shutil.copy2(source_path, destination)
+    return copy_name
 
 
 def remove_file(category: str, filename: str) -> None:

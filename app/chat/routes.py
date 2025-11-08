@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, current_app, render_template, request, send_from_directory
 from flask_login import current_user, login_required
@@ -32,7 +32,12 @@ from app.models.user import (
     DEFAULT_TIMEZONE_OFFSET,
 )
 from app.utils.datetime import to_utc_iso
-from app.utils.storage import remove_file, save_avatar, save_message_image
+from app.utils.storage import (
+    duplicate_message_file,
+    remove_file,
+    save_avatar,
+    save_message_image,
+)
 
 VALID_TIMEZONE_MODES = {"system", "custom"}
 MIN_TIMEZONE_OFFSET = -12 * 60
@@ -71,6 +76,20 @@ def _chat_partner(members: List[ChatMember], user_id: int) -> Optional[User]:
 def _serialize_message(message: Message) -> Dict[str, Any]:
     payload = message.to_dict()
     payload["sender"] = message.sender.to_public_dict() if message.sender else None
+    if message.forwarded_from_id:
+        origin = message.forwarded_from
+        forwarded_payload: Dict[str, Any] = {"id": message.forwarded_from_id}
+        if origin:
+            forwarded_payload["chat_id"] = origin.chat_id
+            forwarded_payload["sender"] = (
+                origin.sender.to_public_dict() if origin.sender else None
+            )
+        else:
+            forwarded_payload["chat_id"] = None
+            forwarded_payload["sender"] = None
+        payload["forwarded_from"] = forwarded_payload
+    else:
+        payload["forwarded_from"] = None
     return payload
 
 
@@ -724,6 +743,127 @@ def handle_message_delete(data):
     payload = _serialize_message(message)
     socketio.emit("message:deleted", payload, room=f"chat_{message.chat_id}")
     return {"ok": True, "message": payload}
+
+
+@socketio.on("message:forward")
+def handle_message_forward(data):
+    if not current_user.is_authenticated:
+        return {"ok": False, "error": "Unauthorized"}
+
+    message_id = data.get("message_id") or data.get("id")
+    if not message_id:
+        return {"ok": False, "error": "Message ID required"}
+
+    raw_targets = (
+        data.get("target_chat_ids")
+        if data.get("target_chat_ids") is not None
+        else data.get("target_chat_id")
+    )
+    if raw_targets is None:
+        raw_targets = data.get("chat_ids")
+
+    candidates: List[Any]
+    if raw_targets is None:
+        candidates = []
+    elif isinstance(raw_targets, (list, tuple, set)):
+        candidates = list(raw_targets)
+    else:
+        candidates = [raw_targets]
+
+    target_ids: Set[int] = set()
+    for value in candidates:
+        parts = [value]
+        if isinstance(value, str) and "," in value:
+            parts = [chunk.strip() for chunk in value.split(",")]
+        for part in parts:
+            try:
+                chat_id = int(str(part).strip())
+            except (TypeError, ValueError):
+                continue
+            if chat_id > 0:
+                target_ids.add(chat_id)
+
+    message = Message.query.get(message_id)
+    if not message:
+        return {"ok": False, "error": "Message not found"}
+    if not message.chat or not message.chat.has_member(current_user.id):
+        return {"ok": False, "error": "You do not have access to this message."}
+
+    if message.chat_id in target_ids:
+        target_ids.discard(message.chat_id)
+    if not target_ids:
+        return {"ok": False, "error": "Select at least one chat to forward to."}
+
+    source = message.forwarded_from or message
+    if not source or source.is_deleted:
+        return {"ok": False, "error": "This message can no longer be forwarded."}
+
+    forwarded_results: List[Tuple[Chat, Message]] = []
+    copied_files: List[str] = []
+
+    try:
+        for chat_id in target_ids:
+            chat = Chat.query.get(chat_id)
+            if not chat or not chat.has_member(current_user.id):
+                raise ValueError("Chat not found or access denied.")
+
+            if not chat.is_group:
+                other_member = chat.members.filter(ChatMember.user_id != current_user.id).first()
+                if other_member and not _are_mutual_friends(current_user.id, other_member.user_id):
+                    raise ValueError("You must be friends before you can chat.")
+
+            member_ids = [member.user_id for member in chat.members if member.user_id != current_user.id]
+            if member_ids and BlockedUser.query.filter(
+                BlockedUser.user_id.in_(member_ids),
+                BlockedUser.blocked_user_id == current_user.id,
+            ).first():
+                raise ValueError("You cannot send messages to this chat right now.")
+
+            new_message = Message(
+                chat_id=chat.id,
+                sender_id=current_user.id,
+                body=source.body,
+                forwarded_from_id=source.id,
+            )
+            db.session.add(new_message)
+            db.session.flush()
+
+            for attachment in list(source.attachments):
+                try:
+                    new_filename = duplicate_message_file(attachment.filename)
+                except FileNotFoundError as exc:
+                    raise ValueError("Original attachment is missing.") from exc
+                copied_files.append(new_filename)
+                db.session.add(
+                    MessageAttachment(
+                        message_id=new_message.id,
+                        filename=new_filename,
+                        mimetype=attachment.mimetype,
+                    )
+                )
+
+            forwarded_results.append((chat, new_message))
+
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        for filename in copied_files:
+            remove_file("messages", filename)
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        db.session.rollback()
+        for filename in copied_files:
+            remove_file("messages", filename)
+        current_app.logger.exception("Failed to forward message.")
+        return {"ok": False, "error": "Failed to forward message."}
+
+    forwarded_payloads: List[Dict[str, Any]] = []
+    for chat, new_message in forwarded_results:
+        payload = _serialize_message(new_message)
+        socketio.emit("new_message", payload, room=f"chat_{chat.id}")
+        forwarded_payloads.append({"chat_id": chat.id, "message": payload})
+
+    return {"ok": True, "forwarded": forwarded_payloads, "count": len(forwarded_payloads)}
 
 
 @socketio.on("chat:create")

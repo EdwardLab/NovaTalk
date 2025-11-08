@@ -14,6 +14,7 @@ class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     chat_id = db.Column(db.Integer, db.ForeignKey("chats.id"), nullable=False)
     sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    forwarded_from_id = db.Column(db.Integer, db.ForeignKey("messages.id"), nullable=True)
     body = db.Column(db.Text(collation="utf8mb4_unicode_ci"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_edited_at = db.Column(db.DateTime, nullable=True)
@@ -21,6 +22,11 @@ class Message(db.Model):
     edited = db.Column(db.Boolean, default=False, nullable=False)
 
     attachments = db.relationship("MessageAttachment", backref="message", cascade="all, delete-orphan")
+    forwarded_from = db.relationship(
+        "Message",
+        remote_side=[id],
+        foreign_keys=[forwarded_from_id],
+    )
 
     @validates("body")
     def _coerce_body(self, _, value):
@@ -35,6 +41,7 @@ class Message(db.Model):
             "id": self.id,
             "chat_id": self.chat_id,
             "sender_id": self.sender_id,
+            "forwarded_from_id": self.forwarded_from_id,
             "body": self.body,
             "created_at": to_utc_iso(self.created_at),
             "last_edited_at": to_utc_iso(self.last_edited_at) if self.last_edited_at else None,
