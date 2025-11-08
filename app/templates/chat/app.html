@@ -267,6 +267,31 @@
                     </button>
                 </div>
             </form>
+            <div class="forward-dialog" data-forward-dialog hidden aria-hidden="true">
+                <div class="forward-dialog__backdrop" data-forward-cancel></div>
+                <div class="forward-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="forward-dialog-title">
+                    <header class="forward-dialog__header">
+                        <h2 id="forward-dialog-title">Forward message</h2>
+                        <button type="button" class="md-icon-button md-ripple" data-forward-cancel>
+                            <span class="material-symbols-rounded" aria-hidden="true">close</span>
+                            <span class="sr-only">Close</span>
+                        </button>
+                    </header>
+                    <div class="forward-dialog__body">
+                        <div class="forward-dialog__search input-field">
+                            <label class="sr-only" for="forward-dialog-search">Search chats</label>
+                            <input id="forward-dialog-search" type="search" class="input-field__control" placeholder="Search chats" data-forward-search>
+                        </div>
+                        <div class="forward-dialog__list" data-forward-targets>
+                            <p class="forward-dialog__empty" data-forward-empty hidden>No chats available.</p>
+                        </div>
+                    </div>
+                    <footer class="forward-dialog__footer">
+                        <button type="button" class="md-text-button md-ripple" data-forward-cancel>Cancel</button>
+                        <button type="button" class="md-filled-button md-ripple" data-forward-send disabled>Forward</button>
+                    </footer>
+                </div>
+            </div>
         </section>
     </div>
 {% endblock %}

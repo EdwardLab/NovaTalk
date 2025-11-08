@@ -62,6 +62,15 @@
         settings: normalizeSettings(bootState.user?.settings),
     };
 
+    const createForwardState = () => ({
+        open: false,
+        messageId: null,
+        sourceChatId: null,
+        selectedChatIds: [],
+        search: '',
+        isSubmitting: false,
+    });
+
     const state = {
         user: normalizedUser,
         chats: Array.isArray(bootState.chats) ? bootState.chats : [],
@@ -73,6 +82,7 @@
             pendingGroupInvites: bootState.ui?.pendingGroupInvites || 0,
             editingMessage: null,
             showGroupMembers: false,
+            forwarding: createForwardState(),
         },
     };
 
@@ -160,6 +170,11 @@
         groupMembersList: root.querySelector('[data-group-members-list]'),
         groupMembersEmpty: root.querySelector('[data-group-members-empty]'),
         groupMembersClose: root.querySelector('[data-group-members-close]'),
+        forwardDialog: root.querySelector('[data-forward-dialog]'),
+        forwardTargets: root.querySelector('[data-forward-targets]'),
+        forwardEmpty: root.querySelector('[data-forward-empty]'),
+        forwardSearch: root.querySelector('[data-forward-search]'),
+        forwardSend: root.querySelector('[data-forward-send]'),
     };
 
     const populateTimezoneOptions = () => {
@@ -344,6 +359,25 @@
 
     const getActiveChat = () => getChatById(state.ui.activeChatId);
 
+    const getForwardContext = () => {
+        if (!state.ui.forwarding) {
+            state.ui.forwarding = createForwardState();
+        }
+        return state.ui.forwarding;
+    };
+
+    const getChatDisplayName = (chat) => {
+        if (!chat) {
+            return 'Conversation';
+        }
+        return (
+            chat.name ||
+            chat.partner?.display_name ||
+            chat.partner?.username ||
+            'Conversation'
+        );
+    };
+
     const formatUsername = (value) => {
         if (!value) {
             return '';
@@ -390,14 +424,25 @@
         if (message.is_deleted) {
             return 'Message deleted';
         }
+        const forwarded = !message.is_deleted ? message.forwarded_from : null;
+        let prefix = '';
+        if (forwarded) {
+            const senderName =
+                forwarded.sender?.display_name ||
+                forwarded.sender?.username ||
+                forwarded.sender?.name ||
+                '';
+            prefix = senderName ? `Forwarded from ${senderName}` : 'Forwarded message';
+        }
         const body = typeof message.body === 'string' ? message.body.trim() : '';
         if (body) {
-            return body.length > 140 ? `${body.slice(0, 137)}…` : body;
+            const trimmed = body.length > 140 ? `${body.slice(0, 137)}…` : body;
+            return prefix ? `${prefix}: ${trimmed}` : trimmed;
         }
         if (ensureArray(message.attachments).length) {
-            return '📷 Photo';
+            return prefix ? `${prefix} · 📷 Photo` : '📷 Photo';
         }
-        return 'New message';
+        return prefix || 'New message';
     };
 
     const setAvatar = (target, payload) => {
@@ -534,6 +579,253 @@
 
             listItem.appendChild(actions);
             list.appendChild(listItem);
+        });
+    };
+
+    const getForwardableChats = (sourceChatId) => {
+        const chats = ensureArray(state.chats);
+        return chats.filter((chat) => {
+            if (!chat || chat.id === undefined || chat.id === null) {
+                return false;
+            }
+            if (String(chat.id) === String(sourceChatId)) {
+                return false;
+            }
+            if (chat.can_message === false) {
+                return false;
+            }
+            return true;
+        });
+    };
+
+    const renderForwardDialog = () => {
+        const dialog = elements.forwardDialog;
+        const list = elements.forwardTargets;
+        const empty = elements.forwardEmpty;
+        const search = elements.forwardSearch;
+        const sendButton = elements.forwardSend;
+        if (!dialog || !list) {
+            return;
+        }
+
+        const context = getForwardContext();
+        if (!context.open) {
+            dialog.hidden = true;
+            dialog.setAttribute('aria-hidden', 'true');
+            list.innerHTML = '';
+            if (empty) {
+                empty.hidden = true;
+            }
+            if (search) {
+                search.value = '';
+                search.disabled = false;
+            }
+            if (sendButton) {
+                sendButton.disabled = true;
+                sendButton.textContent = 'Forward';
+                sendButton.removeAttribute('data-loading');
+            }
+            return;
+        }
+
+        dialog.hidden = false;
+        dialog.setAttribute('aria-hidden', 'false');
+
+        if (search) {
+            const currentValue = context.search || '';
+            if (search.value !== currentValue) {
+                search.value = currentValue;
+            }
+            search.disabled = context.isSubmitting;
+        }
+
+        const available = getForwardableChats(context.sourceChatId);
+        const validIds = new Set(available.map((chat) => String(chat.id)));
+        context.selectedChatIds = context.selectedChatIds.filter((id) =>
+            validIds.has(String(id))
+        );
+        const query = (context.search || '').trim().toLowerCase();
+        const filtered = available.filter((chat) => {
+            if (!query) {
+                return true;
+            }
+            const displayName = getChatDisplayName(chat).toLowerCase();
+            const username = (chat.partner?.username || '').toLowerCase();
+            return displayName.includes(query) || username.includes(query);
+        });
+
+        list.querySelectorAll('[data-forward-target]').forEach((node) => node.remove());
+        filtered.forEach((chat) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'forward-dialog__item';
+            item.dataset.forwardTarget = chat.id;
+            item.setAttribute('data-forward-target', chat.id);
+            const selected = context.selectedChatIds.some(
+                (value) => String(value) === String(chat.id)
+            );
+            if (selected) {
+                item.classList.add('is-selected');
+            }
+            item.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            item.disabled = context.isSubmitting;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'forward-dialog__avatar';
+            setAvatar(avatar, {
+                avatar: chat.is_group ? chat.avatar : chat.partner?.avatar,
+                display: getChatDisplayName(chat),
+            });
+
+            const details = document.createElement('div');
+            details.className = 'forward-dialog__details';
+            const name = document.createElement('span');
+            name.className = 'forward-dialog__name';
+            name.textContent = getChatDisplayName(chat);
+            const meta = document.createElement('span');
+            meta.className = 'forward-dialog__meta';
+            if (chat.is_group) {
+                const count = ensureArray(chat.members).length;
+                meta.textContent = `${count} participant${count === 1 ? '' : 's'}`;
+            } else {
+                meta.textContent = chat.partner?.username
+                    ? formatUsername(chat.partner.username)
+                    : 'Direct message';
+            }
+            details.appendChild(name);
+            details.appendChild(meta);
+
+            const check = document.createElement('span');
+            check.className = 'forward-dialog__check material-symbols-rounded';
+            check.setAttribute('aria-hidden', 'true');
+            check.textContent = 'check_circle';
+
+            item.appendChild(avatar);
+            item.appendChild(details);
+            item.appendChild(check);
+
+            list.appendChild(item);
+        });
+
+        if (empty && empty.parentElement !== list) {
+            list.appendChild(empty);
+        }
+        if (empty) {
+            if (filtered.length === 0) {
+                empty.hidden = false;
+                empty.textContent = available.length === 0 ? 'No chats available.' : 'No matches found.';
+            } else {
+                empty.hidden = true;
+            }
+        }
+
+        if (sendButton) {
+            const selectionCount = context.selectedChatIds.length;
+            sendButton.disabled = context.isSubmitting || selectionCount === 0;
+            sendButton.textContent = selectionCount > 0 ? `Forward (${selectionCount})` : 'Forward';
+            if (context.isSubmitting) {
+                sendButton.setAttribute('data-loading', 'true');
+            } else {
+                sendButton.removeAttribute('data-loading');
+            }
+        }
+    };
+
+    const closeForwardDialog = () => {
+        state.ui.forwarding = createForwardState();
+        renderForwardDialog();
+    };
+
+    const openForwardDialog = (chatId, messageId) => {
+        const messages = getMessagesForChat(chatId);
+        const target = messages.find((item) => String(item.id) === String(messageId));
+        if (!target || target.is_deleted || !isPersistedMessage(target)) {
+            showToast('This message cannot be forwarded.', 'error');
+            return;
+        }
+        const available = getForwardableChats(chatId);
+        if (!available.length) {
+            showToast('No other chats available to forward to.', 'error');
+            return;
+        }
+        closeAllMessageMenus();
+        const numericMessageId = Number(messageId);
+        if (!Number.isFinite(numericMessageId)) {
+            showToast('This message cannot be forwarded.', 'error');
+            return;
+        }
+        state.ui.forwarding = {
+            ...createForwardState(),
+            open: true,
+            messageId: numericMessageId,
+            sourceChatId: chatId,
+        };
+        renderForwardDialog();
+        setTimeout(() => {
+            try {
+                elements.forwardSearch?.focus();
+            } catch (error) {
+                // ignore focus issues
+            }
+        }, 60);
+    };
+
+    const toggleForwardSelection = (chatId) => {
+        const context = getForwardContext();
+        if (!context.open || context.isSubmitting) {
+            return;
+        }
+        const numericId = Number(chatId);
+        if (!Number.isFinite(numericId)) {
+            return;
+        }
+        const index = context.selectedChatIds.findIndex(
+            (value) => Number(value) === numericId
+        );
+        if (index >= 0) {
+            context.selectedChatIds.splice(index, 1);
+        } else {
+            context.selectedChatIds.push(numericId);
+        }
+        renderForwardDialog();
+    };
+
+    const submitForwardRequest = () => {
+        const context = getForwardContext();
+        if (!context.open || context.isSubmitting) {
+            return;
+        }
+        if (!context.messageId || !context.selectedChatIds.length) {
+            showToast('Select at least one chat to forward to.', 'error');
+            return;
+        }
+        if (!socket) {
+            showToast('You are offline. Please wait for reconnection.', 'error');
+            return;
+        }
+        context.isSubmitting = true;
+        renderForwardDialog();
+        const payload = {
+            message_id: Number(context.messageId),
+            target_chat_ids: context.selectedChatIds,
+        };
+        emitSocket('message:forward', payload, (response) => {
+            context.isSubmitting = false;
+            renderForwardDialog();
+            if (!response?.ok) {
+                showToast(response?.error || 'Failed to forward message.', 'error');
+                return;
+            }
+            const forwarded = ensureArray(response.forwarded);
+            forwarded.forEach((entry) => {
+                if (entry?.message) {
+                    appendMessage(entry.message);
+                }
+            });
+            const count = context.selectedChatIds.length;
+            const label = count === 1 ? 'chat' : 'chats';
+            showToast(`Message forwarded to ${count} ${label}.`, 'success');
+            closeForwardDialog();
         });
     };
 
@@ -743,13 +1035,10 @@
                 body.className = 'chat-roster__body';
                 const title = document.createElement('h4');
                 title.className = 'chat-roster__title';
-                title.textContent = chat.name || chat.partner?.display_name || 'Conversation';
+                title.textContent = getChatDisplayName(chat);
                 const preview = document.createElement('p');
                 preview.className = 'chat-roster__preview';
-                let previewText = chat.last_message?.body || '';
-                if (!previewText && ensureArray(chat.last_message?.attachments).length) {
-                    previewText = '📷 Photo';
-                }
+                const previewText = getMessagePreview(chat.last_message);
                 preview.textContent = previewText || 'No messages yet';
                 const meta = document.createElement('span');
                 meta.className = 'chat-roster__meta';
@@ -791,6 +1080,7 @@
             elements.chatsCount.textContent = String(chats.length);
             elements.chatsCount.hidden = chats.length === 0;
         }
+        renderForwardDialog();
         renderGroupMembers();
     };
 
@@ -1122,6 +1412,7 @@
         const persisted = isPersistedMessage(message);
         const canEdit = !isDeleted && persisted && canManageMessage(message);
         const canDelete = persisted && canManageMessage(message);
+        const canForward = !isDeleted && persisted;
         const wrapper = document.createElement('article');
         wrapper.className = 'message';
         wrapper.dataset.messageId = message.id;
@@ -1165,21 +1456,46 @@
                 }
             }, 0);
         } else {
-            const text = document.createElement('p');
-            text.className = 'message__text';
-            if (isDeleted) {
-                text.classList.add('message__text--deleted');
-                text.textContent = 'This message has been deleted.';
-            } else {
-                text.textContent = message.body || '';
-                if (message.edited) {
-                    const editedTag = document.createElement('span');
-                    editedTag.className = 'message__edited-tag';
-                    editedTag.textContent = ' (edited)';
-                    text.appendChild(editedTag);
-                }
+            if (!isDeleted && message.forwarded_from) {
+                const forwardedLabel = document.createElement('div');
+                forwardedLabel.className = 'message__forwarded';
+                const icon = document.createElement('span');
+                icon.className = 'material-symbols-rounded';
+                icon.setAttribute('aria-hidden', 'true');
+                icon.textContent = 'forward';
+                const label = document.createElement('span');
+                const senderName =
+                    message.forwarded_from.sender?.display_name ||
+                    message.forwarded_from.sender?.username ||
+                    message.forwarded_from.sender?.name ||
+                    '';
+                label.textContent = senderName
+                    ? `Forwarded from ${senderName}`
+                    : 'Forwarded message';
+                forwardedLabel.appendChild(icon);
+                forwardedLabel.appendChild(label);
+                bubble.appendChild(forwardedLabel);
             }
-            bubble.appendChild(text);
+
+            const bodyText = typeof message.body === 'string' ? message.body : '';
+            const hasBodyContent = isDeleted || bodyText.trim().length > 0;
+            if (hasBodyContent) {
+                const text = document.createElement('p');
+                text.className = 'message__text';
+                if (isDeleted) {
+                    text.classList.add('message__text--deleted');
+                    text.textContent = 'This message has been deleted.';
+                } else {
+                    text.textContent = bodyText;
+                    if (message.edited) {
+                        const editedTag = document.createElement('span');
+                        editedTag.className = 'message__edited-tag';
+                        editedTag.textContent = ' (edited)';
+                        text.appendChild(editedTag);
+                    }
+                }
+                bubble.appendChild(text);
+            }
         }
 
         if (!isDeleted && ensureArray(message.attachments).length) {
@@ -1200,7 +1516,7 @@
         }
 
         if (!isEditing) {
-            const showMenu = canEdit || (canDelete && !isDeleted);
+            const showMenu = canEdit || (canDelete && !isDeleted) || canForward;
             if (showMenu) {
                 bubble.classList.add('message__bubble--has-menu');
                 const menuWrapper = document.createElement('div');
@@ -1223,6 +1539,24 @@
                 menu.className = 'message__menu';
                 menu.dataset.messageMenu = 'true';
                 menu.setAttribute('role', 'menu');
+
+                if (canForward) {
+                    const forwardItem = document.createElement('button');
+                    forwardItem.type = 'button';
+                    forwardItem.className = 'message__menu-item';
+                    forwardItem.dataset.messageAction = 'forward';
+                    forwardItem.dataset.messageId = message.id;
+                    forwardItem.dataset.chatId = message.chat_id;
+                    forwardItem.setAttribute('role', 'menuitem');
+                    const forwardIcon = document.createElement('span');
+                    forwardIcon.className = 'material-symbols-rounded';
+                    forwardIcon.textContent = 'forward';
+                    const forwardLabel = document.createElement('span');
+                    forwardLabel.textContent = 'Forward';
+                    forwardItem.appendChild(forwardIcon);
+                    forwardItem.appendChild(forwardLabel);
+                    menu.appendChild(forwardItem);
+                }
 
                 if (canEdit) {
                     const editItem = document.createElement('button');
@@ -1686,6 +2020,7 @@
             state.ui.showGroupMembers = false;
         }
         renderChats();
+        renderForwardDialog();
         clearComposer();
         syncMobileDrawer();
         chat = chat || getChatById(chatId);
@@ -1800,6 +2135,7 @@
         state.ui.activeChatId = null;
         state.ui.editingMessage = null;
         state.ui.showGroupMembers = false;
+        closeForwardDialog();
         renderChats();
         renderGroupMembers();
         if (elements.conversationHeader) {
@@ -1963,6 +2299,7 @@
             state.ui.pendingGroupInvites = incomingState.ui.pendingGroupInvites;
         }
         state.ui.editingMessage = null;
+        state.ui.forwarding = createForwardState();
         renderProfile();
         renderProfileForm();
         renderChats();
@@ -2478,8 +2815,32 @@
                     case 'delete':
                         requestDeleteMessage(chatId, messageId);
                         break;
+                    case 'forward':
+                        openForwardDialog(chatId, messageId);
+                        break;
                     default:
                         break;
+                }
+                return;
+            }
+            const forwardCancel = event.target.closest('[data-forward-cancel]');
+            if (forwardCancel) {
+                event.preventDefault();
+                closeForwardDialog();
+                return;
+            }
+            const forwardSend = event.target.closest('[data-forward-send]');
+            if (forwardSend) {
+                event.preventDefault();
+                submitForwardRequest();
+                return;
+            }
+            const forwardTarget = event.target.closest('[data-forward-target]');
+            if (forwardTarget) {
+                event.preventDefault();
+                const targetChatId = Number(forwardTarget.dataset.forwardTarget);
+                if (!Number.isNaN(targetChatId)) {
+                    toggleForwardSelection(targetChatId);
                 }
                 return;
             }
@@ -2585,6 +2946,11 @@
         });
         root.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
+                if (getForwardContext().open) {
+                    event.preventDefault();
+                    closeForwardDialog();
+                    return;
+                }
                 closeAllMessageMenus();
             }
         });
@@ -2595,6 +2961,16 @@
         });
         root.addEventListener('input', (event) => {
             const target = event.target;
+            if (target.matches('[data-forward-search]')) {
+                const context = getForwardContext();
+                if (!context.open || context.isSubmitting) {
+                    target.value = context.search || '';
+                    return;
+                }
+                context.search = target.value;
+                renderForwardDialog();
+                return;
+            }
             if (!target.matches('[data-message-edit-input]')) {
                 return;
             }
