@@ -15,6 +15,7 @@ It’s designed to feel familiar yet modern — offering a clean Material Design
 - **Avatar uploads** with live crop preview + image attachments in chat
 - **Friend system** — requests, blocking, and public profile pages
 - **CSRF-safe everywhere** (forms + AJAX included)
+- **Message forwarding** to share messages (and attachments) across chats
 - **Command-line admin tools** for creating and managing users directly
 
 ## Getting Started
@@ -168,11 +169,3 @@ For more CLI usages, please refer to [CLI Documents](docs/cli.md).
 ## License
 
 This project is licensed under the AGPL-V3 License. See [LICENSE](LICENSE) for details.
-
-<div align="center">
-  <a href="https://moonshot.hackclub.com" target="_blank">
-    <img src="https://hc-cdn.hel1.your-objectstorage.com/s/v3/35ad2be8c916670f3e1ac63c1df04d76a4b337d1_moonshot.png" 
-         alt="This project is part of Moonshot, a 4-day hackathon in Florida visiting Kennedy Space Center and Universal Studios!" 
-         style="width: 100%;">
-  </a>
-</div>
